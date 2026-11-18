@@ -54,16 +54,23 @@ fn list_skips_a_match_that_is_an_ancestor_of_another() {
         .arg(format!("{} 30; :", inner.display()))
         .spawn()
         .unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    let found = cusco::process::list_processes(&[("codex", "codex".into())]);
-    let child = found
-        .iter()
-        .map(|(_, pid)| *pid)
-        .find(|pid| cusco::process::parent_pid(*pid) == Some(parent.id()));
-    assert!(child.is_some(), "{found:?}");
+    // Wait for the shell to start its child rather than sleeping a fixed time.
+    let deadline = std::time::Instant::now() + WAIT;
+    let (found, child) = loop {
+        let found = cusco::process::list_processes(&[("codex", "codex".into())]);
+        let child = found
+            .iter()
+            .map(|(_, pid)| *pid)
+            .find(|pid| cusco::process::parent_pid(*pid) == Some(parent.id()));
+        if let Some(child) = child {
+            break (found, child);
+        }
+        assert!(std::time::Instant::now() < deadline, "no child: {found:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
     assert!(!found.contains(&("codex", parent.id())), "{found:?}");
     let _ = std::process::Command::new("kill")
-        .arg(child.unwrap().to_string())
+        .arg(child.to_string())
         .status();
     parent.kill().unwrap();
     parent.wait().unwrap();

@@ -153,15 +153,26 @@ pub fn fake_agent(dir: &Path, name: &str) -> std::process::Child {
 }
 
 /// Copies a system binary to `path` and gives the copy an ad hoc signature.
+/// Only the bytes are copied: a copy that keeps the original's extended
+/// attributes can fail to sign ("Attribute not found") when macOS updates
+/// them at the same moment, so signing is also retried.
 pub fn signed_copy(source: &str, path: &Path) {
-    std::fs::copy(source, path).unwrap();
-    let signed = Command::new("codesign")
-        .args(["-f", "-s", "-"])
-        .arg(path)
-        .stderr(Stdio::null())
-        .status()
-        .unwrap();
-    assert!(signed.success(), "codesign failed for {}", path.display());
+    std::fs::write(path, std::fs::read(source).unwrap()).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut errors = String::new();
+    for _ in 0..3 {
+        let signed = Command::new("codesign")
+            .args(["-f", "-s", "-"])
+            .arg(path)
+            .output()
+            .unwrap();
+        if signed.status.success() {
+            return;
+        }
+        errors.push_str(&String::from_utf8_lossy(&signed.stderr));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("codesign failed for {}: {errors}", path.display());
 }
 
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
