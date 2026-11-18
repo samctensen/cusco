@@ -69,6 +69,55 @@ pub(crate) fn with_reason(reason: &str) -> Attrs {
     attrs
 }
 
+/// One session's turns: which is open, and which have closed. Hooks run
+/// concurrently, so a record can arrive after its turn closed; such a turn is
+/// never reopened.
+#[derive(Default)]
+pub(crate) struct Turns {
+    open: Option<String>,
+    closed: HashSet<String>,
+    numbered: u64,
+}
+
+impl Turns {
+    /// The turn a record belongs to: its own turn id, else the open turn.
+    pub(crate) fn of(&self, record: &HookRecord) -> Option<String> {
+        record.turn_id.clone().or_else(|| self.open.clone())
+    }
+
+    pub(crate) fn is_closed(&self, turn: &str) -> bool {
+        self.closed.contains(turn)
+    }
+
+    /// Starts the record's turn, numbering it when the record carries no
+    /// turn id. Returns the new turn and the previously open turn, if any,
+    /// or `None` when the record's turn already closed.
+    pub(crate) fn begin(&mut self, record: &HookRecord) -> Option<(String, Option<String>)> {
+        let turn = record.turn_id.clone().unwrap_or_else(|| {
+            self.numbered += 1;
+            format!("n{}", self.numbered)
+        });
+        if self.closed.contains(&turn) {
+            return None;
+        }
+        let previous = self.open.replace(turn.clone()).filter(|open| *open != turn);
+        Some((turn, previous))
+    }
+
+    /// Marks a turn closed (the open turn when `turn` is `None`). Returns it
+    /// if this call closed it.
+    pub(crate) fn finish(&mut self, turn: Option<String>) -> Option<String> {
+        let turn = turn.or_else(|| self.open.clone())?;
+        if !self.closed.insert(turn.clone()) {
+            return None;
+        }
+        if self.open.as_deref() == Some(turn.as_str()) {
+            self.open = None;
+        }
+        Some(turn)
+    }
+}
+
 /// Sessions that have ended. Hooks run concurrently, so records can arrive
 /// after the `SessionEnd` they preceded; those are ignored. Bounded so a
 /// long-running service doesn't grow without limit.

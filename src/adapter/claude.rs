@@ -1,7 +1,7 @@
 //! The Claude Code adapter. See the design's "Claude Code" adapter section.
 
 use super::{
-    Adapter, EndedSessions, agent_path, close, confirm, open, open_session, request_path,
+    Adapter, EndedSessions, Turns, agent_path, close, confirm, open, open_session, request_path,
     session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
@@ -78,9 +78,7 @@ impl Adapter for ClaudeAdapter {
 
 #[derive(Default)]
 struct Session {
-    open_turn: Option<String>,
-    closed_turns: HashSet<String>,
-    numbered_turns: u64,
+    turns: Turns,
     /// Each known subagent and the turn that started it.
     agents: HashMap<String, String>,
     /// Recent `(digest, tool_use_id)` pairs per actor.
@@ -185,11 +183,8 @@ impl Session {
                 // A known agent stays under the turn that started it, even if
                 // later records carry a newer prompt id.
                 let known = self.agents.get(agent);
-                let turn = known
-                    .or(record.turn_id.as_ref())
-                    .or(self.open_turn.as_ref())?
-                    .clone();
-                let may_open = known.is_some() || !self.closed_turns.contains(&turn);
+                let turn = known.cloned().or_else(|| self.turns.of(record))?;
+                let may_open = known.is_some() || !self.turns.is_closed(&turn);
                 let path = agent_path(&turn_path(session, &turn), agent);
                 Some(Actor {
                     key: agent.clone(),
@@ -199,8 +194,8 @@ impl Session {
                 })
             }
             None => {
-                let turn = record.turn_id.as_ref().or(self.open_turn.as_ref())?.clone();
-                let may_open = !self.closed_turns.contains(&turn);
+                let turn = self.turns.of(record)?;
+                let may_open = !self.turns.is_closed(&turn);
                 let path = turn_path(session, &turn);
                 Some(Actor {
                     key: String::new(),
@@ -213,22 +208,15 @@ impl Session {
     }
 
     fn start_turn(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
-        let turn = record.turn_id.clone().unwrap_or_else(|| {
-            self.numbered_turns += 1;
-            format!("n{}", self.numbered_turns)
-        });
-        if self.closed_turns.contains(&turn) {
+        let Some((turn, previous)) = self.turns.begin(record) else {
             return;
-        }
+        };
         // Claude has no interrupt hook: a new prompt while a turn is still
         // open means that turn was interrupted.
-        if let Some(previous) = self.open_turn.clone()
-            && previous != turn
-        {
-            self.end_turn(session, Some(previous), Outcome::Cancelled, events);
+        if previous.is_some() {
+            self.end_turn(session, previous, Outcome::Cancelled, events);
         }
         events.push(open(turn_path(session, &turn), Attrs::new()));
-        self.open_turn = Some(turn);
     }
 
     fn end_turn(
@@ -238,17 +226,11 @@ impl Session {
         outcome: Outcome,
         events: &mut Vec<Event>,
     ) {
-        let Some(turn) = turn.or_else(|| self.open_turn.clone()) else {
+        let Some(turn) = self.turns.finish(turn) else {
             return;
         };
-        if !self.closed_turns.insert(turn.clone()) {
-            return;
-        }
         let path = turn_path(session, &turn);
         events.push(close(path.clone(), outcome));
-        if self.open_turn.as_deref() == Some(turn.as_str()) {
-            self.open_turn = None;
-        }
         // The tree closes the turn's own requests; forget them here too.
         let prefix = format!("{path}/request:");
         self.requests
