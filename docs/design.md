@@ -176,6 +176,12 @@ processes to the client's process and sends that id, so Cusco can tell when a
 session's process exits. The same walk gives the surface (`cli`, `desktop` or
 `ide`) on a best-effort basis.
 
+A process matches a client when its executable's file name is the client name,
+or when the name it was launched as (`argv[0]`) is. The second rule matters
+because installers run versioned binaries through symbolic links: the native
+Claude Code install runs `~/.local/bin/claude`, which the kernel reports as
+`…/claude/versions/<version>`.
+
 ### Normalized events
 
 Adapters produce five event types. The core knows nothing about any specific
@@ -191,7 +197,18 @@ client.
 
 Any event that mentions a node also confirms that node and its ancestors. An event
 for a node Cusco hasn't seen opens it implicitly, so a session that started before
-Cusco did is picked up on its next event.
+Cusco did is picked up on its next event. In the adapters, tool and request
+activity opens the turn or subagent it comes from, so a turn already running when
+Cusco starts shows as `working` from its first tool event.
+
+Hooks run concurrently, so records can arrive out of order. Adapters never reopen
+a closed turn, a stopped subagent or an ended session from a late record. Three
+exceptions are deliberate:
+- A new `SessionStart` or prompt reopens an ended session, because a resumed
+  session reuses its id.
+- Activity from a subagent Cusco hasn't seen may open it under a turn that already
+  ended: an agent that is acting is alive. A late `SubagentStart` opens nothing.
+- Opening such an agent does not reopen its turn.
 
 ## Adapters
 
@@ -216,7 +233,7 @@ event and approval can be attributed to the subagent that caused it.
 | `Elicitation` / `ElicitationResult` | `open` / `close` a request with reason `mcp_input`, keyed by `elicitation_id`. |
 | `Notification` (`idle_prompt`) | Claude is waiting at the prompt. `close` any open turn as `cancelled`. |
 | `SubagentStart` / `SubagentStop` | `open` / `close` agent, keyed by `agent_id`, under the current turn. |
-| `Stop` | `close` turn as `ok`. Reconcile the session's open agents against `background_tasks`. |
+| `Stop` | `close` turn as `ok`. Reconcile the session's open agents against `background_tasks`: close those not listed, except any with an open request. A list with an entry that has no id counts as no list. |
 | `StopFailure` | `close` turn as `error`, with the error code. |
 | `SessionEnd` | `close` session. |
 
@@ -229,6 +246,12 @@ approval closes when its tool's `PostToolUse` or `PostToolUseFailure` arrives,
 matched by `tool_use_id`. A denied one closes on the same actor's next
 `PreToolUse`, because a new tool call means the agent has moved on, or when the
 actor's turn or subagent ends. **Verify** what a manual denial sends.
+
+Parallel tool calls run their hooks at the same moment, so a sibling call's
+`PreToolUse` can arrive just after another call's `PermissionRequest`. A new tool
+call therefore answers an approval only once the approval has been open for one
+second, which is less than anyone takes to respond to a prompt. The same rule
+applies to Codex.
 
 **Background work.** `UserPromptSubmit` also fires when a background subagent
 reports back, so it doesn't always mean you typed. **Verify** whether
@@ -245,7 +268,7 @@ parent's `session_id`.
 | `SessionStart` | `open` session. |
 | `UserPromptSubmit` | `open` turn, keyed by `turn_id`. |
 | `PermissionRequest` | `open` a request with reason `approval` under the turn. |
-| `PreToolUse` | `close` the turn's open approval: a new tool call means it was answered. |
+| `PreToolUse` | `close` the turn's open approval once it has been open for a second: a new tool call means it was answered. |
 | `PostToolUse` | `close` the turn's open approval if its tool input digest matches. |
 | `SubagentStart` / `SubagentStop` | `open` / `close` agent, keyed by `agent_id`, under the turn. |
 | `Stop` | `close` turn as `ok`. |
@@ -348,6 +371,9 @@ processes of each enabled client:
 - **Each running process:** becomes an unconfirmed `process` node under its
   client, so the client shows `unknown`. The node is replaced by a session when an
   event arrives carrying that process id, and removed when the process exits.
+- **A supervisor:** a matching process whose descendant also matches, such as
+  the Codex Desktop supervisor and its app server, gets no node. Hooks claim the
+  nearest matching ancestor, so a supervisor's node would never be claimed.
 
 `unknown` therefore means exactly "these processes haven't reported since Cusco
 started." It clears on its own as sessions are used or closed.
