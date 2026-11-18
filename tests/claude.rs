@@ -115,3 +115,11 @@ fn missing_background_tasks_skips_reconciliation() {
     let t = run("claude/no_background_list");
     assert!(t.contains("/claude/session:s1/turn:p1/agent:a1"));
 }
+
+#[test]
+fn resumed_session_is_tracked_again() {
+    assert_eq!(
+        run("claude/resume_after_end").state("/claude"),
+        Some(State::NeedsInput)
+    );
+}

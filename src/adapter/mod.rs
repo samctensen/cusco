@@ -142,7 +142,18 @@ impl EndedSessions {
         }
     }
 
-    pub(crate) fn contains(&self, session_id: &str) -> bool {
-        self.set.contains(session_id)
+    /// Whether to process a record. An ended session stays ended for late
+    /// records, but a new start or prompt brings it back: a resumed session
+    /// reuses its id.
+    pub(crate) fn admits(&mut self, record: &HookRecord) -> bool {
+        if !self.set.contains(&record.session_id) {
+            return true;
+        }
+        if !matches!(record.event.as_str(), "SessionStart" | "UserPromptSubmit") {
+            return false;
+        }
+        self.set.remove(&record.session_id);
+        self.order.retain(|session| *session != record.session_id);
+        true
     }
 }

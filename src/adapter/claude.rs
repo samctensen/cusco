@@ -43,7 +43,7 @@ impl Adapter for ClaudeAdapter {
     }
 
     fn handle(&mut self, record: &HookRecord, _at: Millis) -> Vec<Event> {
-        if self.ended.contains(&record.session_id) {
+        if !self.ended.admits(record) {
             return Vec::new();
         }
         let mut events = Vec::new();

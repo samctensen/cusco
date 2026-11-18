@@ -34,7 +34,7 @@ impl Adapter for CodexAdapter {
     }
 
     fn handle(&mut self, record: &HookRecord, _at: Millis) -> Vec<Event> {
-        if self.ended.contains(&record.session_id) {
+        if !self.ended.admits(record) {
             return Vec::new();
         }
         let session = session_path(CLIENT.name, &record.session_id);

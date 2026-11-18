@@ -72,3 +72,11 @@ fn client_row_reports_turn_level_requests() {
         serde_json::json!(["session", "turn", "agent", "request:turn"])
     );
 }
+
+#[test]
+fn resumed_session_is_tracked_again() {
+    assert_eq!(
+        run("codex/resume_after_end").state("/codex"),
+        Some(State::NeedsInput)
+    );
+}
