@@ -151,17 +151,32 @@ fn depth_of(id: &str) -> usize {
 struct Node {
     kind: Kind,
     open: bool,
+    confirmed: bool,
     opened_at: Millis,
+    last_confirmed: Millis,
     attrs: Attrs,
+}
+
+impl Node {
+    /// A process node stands for activity no session has claimed yet, so no
+    /// source can ever vouch for it.
+    fn is_unconfirmed(&self) -> bool {
+        self.kind == Kind::Process || !self.confirmed
+    }
+
+    fn can_go_stale(&self) -> bool {
+        self.kind.is_work() || self.kind == Kind::Request
+    }
 }
 
 pub struct Tree {
     nodes: BTreeMap<String, Node>,
     clients: Vec<Client>,
+    stale_after: Millis,
 }
 
 impl Tree {
-    pub fn new(clients: &[Client], _stale_after: Millis, at: Millis) -> Tree {
+    pub fn new(clients: &[Client], stale_after: Millis, at: Millis) -> Tree {
         let mut nodes = BTreeMap::new();
         nodes.insert("/".to_string(), Node::new(Kind::Machine, at));
         for client in clients {
@@ -170,21 +185,145 @@ impl Tree {
         Tree {
             nodes,
             clients: clients.to_vec(),
+            stale_after,
         }
     }
 
     pub fn apply(&mut self, event: Event, at: Millis) {
         match event {
-            Event::Open { id, attrs } => self.open(&id, attrs, at),
-            Event::Close { id, outcome } => self.close(&id, outcome, at),
+            Event::Open { id, attrs } => {
+                self.open(&id, attrs, at);
+                self.link_process(&id);
+            }
+            Event::Close { id, outcome } => {
+                if let Some(parent) = parent_of(&id) {
+                    self.confirm(parent, at);
+                }
+                self.close(&id, outcome, at);
+            }
             Event::Attr { id, attrs } => {
                 if let Some(node) = self.nodes.get_mut(&id) {
                     node.attrs.extend(attrs);
+                    self.confirm(&id, at);
+                    self.link_process(&id);
                 }
             }
-            Event::Lost { .. } | Event::Sync { .. } => {}
+            Event::Lost { scope } => {
+                let scope: Vec<String> =
+                    self.subtree(&scope).map(|(path, _)| path.clone()).collect();
+                for path in scope {
+                    if let Some(node) = self.nodes.get_mut(&path)
+                        && !matches!(node.kind, Kind::Machine | Kind::Client)
+                    {
+                        node.confirmed = false;
+                    }
+                }
+            }
+            Event::Sync { scope, nodes } => self.sync(&scope, nodes, at),
         }
         self.prune();
+    }
+
+    /// Unconfirms open turns, agents and requests that have heard nothing for
+    /// `stale_after`. Elapsed time never closes anything.
+    pub fn expire(&mut self, at: Millis) {
+        let stale_after = self.stale_after;
+        for node in self.nodes.values_mut() {
+            if node.open
+                && node.confirmed
+                && node.can_go_stale()
+                && node.last_confirmed + stale_after <= at
+            {
+                node.confirmed = false;
+            }
+        }
+    }
+
+    /// When the next open turn, agent or request goes stale, if any.
+    pub fn next_deadline(&self) -> Option<Millis> {
+        self.nodes
+            .values()
+            .filter(|node| node.open && node.confirmed && node.can_go_stale())
+            .map(|node| node.last_confirmed + self.stale_after)
+            .min()
+    }
+
+    /// Closes every session that ran in process `pid` and removes any process
+    /// node for it. Returns the ids of the sessions it closed.
+    pub fn process_exited(&mut self, pid: u32, at: Millis) -> Vec<String> {
+        let sessions: Vec<String> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                node.kind == Kind::Session
+                    && node.open
+                    && node.attrs.get("pid") == Some(&pid.into())
+            })
+            .map(|(path, _)| path.clone())
+            .collect();
+        for session in &sessions {
+            self.close(session, Outcome::Ok, at);
+        }
+        for client in self.clients.clone() {
+            self.close(&format!("/{}/process:{pid}", client.name), Outcome::Ok, at);
+        }
+        self.prune();
+        sessions
+    }
+
+    /// Marks a node and all its ancestors as confirmed by a source at `at`.
+    fn confirm(&mut self, id: &str, at: Millis) {
+        let mut path = Some(id);
+        while let Some(current) = path {
+            if let Some(node) = self.nodes.get_mut(current) {
+                node.confirmed = true;
+                node.last_confirmed = at;
+            }
+            path = parent_of(current);
+        }
+    }
+
+    /// A session that names its process claims that process's activity, so
+    /// the placeholder process node goes away.
+    fn link_process(&mut self, id: &str) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        if node.kind != Kind::Session {
+            return;
+        }
+        let Some(pid) = node.attrs.get("pid").and_then(|pid| pid.as_u64()) else {
+            return;
+        };
+        let client = id[1..].split('/').next().unwrap_or("");
+        self.nodes.remove(&format!("/{client}/process:{pid}"));
+    }
+
+    fn sync(&mut self, scope: &str, nodes: Vec<(String, Attrs)>, at: Millis) {
+        if !matches!(kind_of(scope), Some(Kind::Machine | Kind::Client)) {
+            self.open(scope, Attrs::new(), at);
+        }
+        if !self.nodes.contains_key(scope) {
+            return;
+        }
+        let beneath: Vec<String> = self
+            .descendants(scope)
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in beneath {
+            self.nodes.remove(&path);
+        }
+        let prefix = if scope == "/" {
+            "/".to_string()
+        } else {
+            format!("{scope}/")
+        };
+        for (id, attrs) in nodes {
+            if id.starts_with(&prefix) {
+                self.open(&id, attrs, at);
+                self.link_process(&id);
+            }
+        }
     }
 
     pub fn state(&self, id: &str) -> Option<State> {
@@ -232,6 +371,7 @@ impl Tree {
             .or_insert_with(|| Node::new(kind, at));
         node.open = true;
         node.attrs.extend(attrs);
+        self.confirm(id, at);
     }
 
     fn close(&mut self, id: &str, _outcome: Outcome, _at: Millis) {
@@ -297,9 +437,10 @@ impl Tree {
     /// The derived state of a node and the node responsible for it.
     fn evaluate(&self, id: &str) -> Option<(State, Option<String>)> {
         self.nodes.get(id)?;
-        let mut best: [Option<(&String, &Node)>; 2] = [None, None];
+        let mut best: [Option<(&String, &Node)>; 3] = [None, None, None];
         for (path, node) in self.subtree(id).filter(|(_, node)| node.open) {
             let category = match node.kind {
+                _ if node.is_unconfirmed() => 2,
                 Kind::Request => 0,
                 kind if kind.is_work() => 1,
                 _ => continue,
@@ -309,7 +450,7 @@ impl Tree {
                 *slot = Some((path, node));
             }
         }
-        let states = [State::NeedsInput, State::Working];
+        let states = [State::NeedsInput, State::Working, State::Unknown];
         for (state, candidate) in states.into_iter().zip(best) {
             if let Some((path, _)) = candidate {
                 return Some((state, Some(path.clone())));
@@ -339,7 +480,9 @@ impl Node {
         Node {
             kind,
             open: true,
+            confirmed: true,
             opened_at: at,
+            last_confirmed: at,
             attrs: Attrs::new(),
         }
     }
