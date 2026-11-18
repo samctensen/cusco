@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 pub const INGEST_SOCKET: &str = "ingest.sock";
 
-const MAX_PAYLOAD_BYTES: u64 = 1 << 20;
+/// Hook payloads include tool input, so a request to write a large file is
+/// large. The cap only guards against unbounded input.
+const MAX_PAYLOAD_BYTES: u64 = 64 << 20;
 const SEND_BUFFER_BYTES: libc::c_int = 65_536;
 
 /// `$CUSCO_DIR`, or `~/Library/Application Support/cusco`.

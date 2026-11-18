@@ -83,3 +83,26 @@ fn ancestor_walk_finds_cargo() {
         None
     );
 }
+
+/// A PermissionRequest for a large Write carries the whole file as tool
+/// input. It must still be recorded, or the approval would never show.
+#[test]
+fn large_payload_is_still_recorded() {
+    let dir = common::short_temp_dir("big");
+    let file = dir.path().join("records.jsonl");
+    let content = "x".repeat(2 << 20);
+    let payload = serde_json::json!({
+        "hook_event_name": "PermissionRequest", "session_id": "s1", "prompt_id": "p1",
+        "tool_name": "Write", "tool_input": {"file_path": "/repo/big.txt", "content": content}
+    })
+    .to_string();
+    common::run_cusco_env(
+        &["hook", "claude"],
+        dir.path(),
+        &[("CUSCO_RECORD", file.to_str().unwrap())],
+        &payload,
+    );
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(text.contains(r#""event":"PermissionRequest""#), "{text}");
+    assert!(text.contains(r#""digest":""#), "{text}");
+}
