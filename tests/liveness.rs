@@ -17,6 +17,26 @@ fn list_finds_named_process() {
     child.wait().unwrap();
 }
 
+/// The native Claude Code installer runs `~/.local/bin/claude`, a symlink to
+/// a versioned binary, so the kernel's executable path never ends in
+/// `claude`. The launch name still does.
+#[test]
+fn list_finds_process_launched_through_a_symlink() {
+    let dir = short_temp_dir("symlink");
+    let target = dir.path().join("2.1.301");
+    signed_copy("/bin/sleep", &target);
+    let link = dir.path().join("claude");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    let mut child = std::process::Command::new(&link).arg("30").spawn().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let launch_name = cusco::process::launch_name(child.id()).unwrap();
+    assert!(launch_name.ends_with("/claude"), "{launch_name}");
+    let found = cusco::process::list_processes(&[("claude", "claude".into())]);
+    assert!(found.contains(&("claude", child.id())), "{found:?}");
+    child.kill().unwrap();
+    child.wait().unwrap();
+}
+
 #[test]
 fn watch_exit_fires_on_kill_and_on_dead_pid() {
     let dir = short_temp_dir("exit");

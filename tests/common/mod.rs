@@ -148,15 +148,20 @@ pub fn wait_for_snapshot(
 /// gets an ad hoc signature.
 pub fn fake_agent(dir: &Path, name: &str) -> std::process::Child {
     let path = dir.join(name);
-    std::fs::copy("/bin/sleep", &path).unwrap();
+    signed_copy("/bin/sleep", &path);
+    Command::new(&path).arg("30").spawn().unwrap()
+}
+
+/// Copies a system binary to `path` and gives the copy an ad hoc signature.
+pub fn signed_copy(source: &str, path: &Path) {
+    std::fs::copy(source, path).unwrap();
     let signed = Command::new("codesign")
         .args(["-f", "-s", "-"])
-        .arg(&path)
+        .arg(path)
         .stderr(Stdio::null())
         .status()
         .unwrap();
     assert!(signed.success(), "codesign failed for {}", path.display());
-    Command::new(&path).arg("30").spawn().unwrap()
 }
 
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.

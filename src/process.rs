@@ -50,6 +50,55 @@ fn resolve_executable(executable: &str) -> String {
         .unwrap_or_else(|_| executable.to_string())
 }
 
+/// The name a process was launched as: its `argv[0]`. Unlike the executable
+/// path, it keeps the name of a symbolic link the process was started
+/// through, such as `~/.local/bin/claude` for `…/claude/versions/2.1.301`.
+pub fn launch_name(pid: u32) -> Option<String> {
+    let mut argmax: c_int = 0;
+    let mut size = std::mem::size_of::<c_int>();
+    let mut name = [libc::CTL_KERN, libc::KERN_ARGMAX];
+    // SAFETY: `argmax` is valid for `size` bytes.
+    let read = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            2,
+            (&mut argmax as *mut c_int).cast::<c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 || argmax <= 0 {
+        return None;
+    }
+    let mut buffer = vec![0u8; argmax as usize];
+    let mut size = buffer.len();
+    let mut name = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as c_int];
+    // SAFETY: the buffer is valid for `size` bytes.
+    let read = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            3,
+            buffer.as_mut_ptr().cast::<c_void>(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if read != 0 {
+        return None;
+    }
+    // Layout: argc, the executable path, NUL padding, then argv[0].
+    let after_argc = buffer.get(std::mem::size_of::<c_int>()..size)?;
+    let after_path = &after_argc[after_argc.iter().position(|byte| *byte == 0)?..];
+    let argv0 = &after_path[after_path.iter().position(|byte| *byte != 0)?..];
+    let end = argv0
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(argv0.len());
+    Some(String::from_utf8_lossy(&argv0[..end]).into_owned())
+}
+
 /// Whether an executable path matches a resolved executable: by file name,
 /// or by full path when it contains a `/`.
 fn matches_executable(path: &Path, executable: &str) -> bool {
@@ -60,12 +109,22 @@ fn matches_executable(path: &Path, executable: &str) -> bool {
     }
 }
 
+/// Whether process `pid` runs `executable`. A bare name also matches the
+/// name the process was launched as, for installs that run a versioned
+/// binary through a symbolic link.
+fn process_matches(pid: u32, path: &Path, executable: &str) -> bool {
+    matches_executable(path, executable)
+        || (!executable.contains('/')
+            && launch_name(pid)
+                .is_some_and(|name| Path::new(&name).file_name() == Some(OsStr::new(executable))))
+}
+
 /// The nearest process at or above `start` running `executable`.
 pub fn find_ancestor(start: u32, executable: &str) -> Option<u32> {
     let executable = resolve_executable(executable);
     let mut pid = start;
     while pid > 1 {
-        if executable_path(pid).is_some_and(|path| matches_executable(&path, &executable)) {
+        if executable_path(pid).is_some_and(|path| process_matches(pid, &path, &executable)) {
             return Some(pid);
         }
         pid = parent_pid(pid)?;
@@ -114,7 +173,7 @@ pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static s
             let path = executable_path(pid)?;
             executables
                 .iter()
-                .find(|(_, executable)| matches_executable(&path, executable))
+                .find(|(_, executable)| process_matches(pid, &path, executable))
                 .map(|(client, _)| (*client, pid))
         })
         .collect()
