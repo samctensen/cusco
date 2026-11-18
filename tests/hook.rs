@@ -11,8 +11,8 @@ fn large_record_is_delivered() {
     let tasks = (0..300)
         .map(|i| BackgroundTask {
             id: format!("task{i}"),
-            kind: "subagent".into(),
-            status: "running".into(),
+            kind: Some("subagent".into()),
+            status: Some("running".into()),
         })
         .collect();
     let record = HookRecord {

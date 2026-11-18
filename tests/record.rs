@@ -30,8 +30,8 @@ fn background_tasks_keep_id_type_and_status_only() {
     let tasks = record.background_tasks.as_ref().unwrap();
     assert_eq!(tasks.len(), 1);
     assert_eq!(
-        (tasks[0].id.as_str(), tasks[0].kind.as_str()),
-        ("a1", "subagent")
+        (tasks[0].id.as_str(), tasks[0].kind.as_deref()),
+        ("a1", Some("subagent"))
     );
     assert!(!serde_json::to_string(&record).unwrap().contains("SECRET"));
 }
@@ -126,4 +126,22 @@ fn unknown_client_and_non_object_are_rejected() {
         HookRecord::from_payload("claude", &json!([1, 2])),
         Err(RecordError::NotAnObject)
     );
+}
+
+#[test]
+fn background_task_needs_only_an_id() {
+    let payload = json!({"hook_event_name": "Stop", "session_id": "s1",
+                         "background_tasks": [{"id": "a1"}]});
+    let record = HookRecord::from_payload("claude", &payload).unwrap();
+    let tasks = record.background_tasks.unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].id, "a1");
+}
+
+#[test]
+fn background_task_list_with_an_unreadable_entry_is_dropped() {
+    let payload = json!({"hook_event_name": "Stop", "session_id": "s1",
+                         "background_tasks": [{"id": "a1"}, {"type": "subagent"}]});
+    let record = HookRecord::from_payload("claude", &payload).unwrap();
+    assert_eq!(record.background_tasks, None);
 }

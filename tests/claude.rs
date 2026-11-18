@@ -160,3 +160,11 @@ fn subagent_start_after_its_stop_opens_nothing() {
     let t = run("claude/stop_before_start");
     assert!(!t.contains("/claude/session:s1/turn:p1/agent:a1"));
 }
+
+#[test]
+fn stop_never_reconciles_away_an_agent_waiting_for_input() {
+    assert_eq!(
+        run("claude/reconcile_keeps_waiting_agent").state("/claude"),
+        Some(State::NeedsInput)
+    );
+}

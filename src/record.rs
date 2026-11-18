@@ -82,9 +82,10 @@ pub struct HookRecord {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BackgroundTask {
     pub id: String,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub status: String,
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -189,19 +190,20 @@ fn id(object: &Map<String, Value>, field: &'static str) -> Result<Option<String>
     }
 }
 
+/// The background task list, or `None` if any entry lacks a usable id. A
+/// partly read list must not look like "these tasks finished".
 fn background_tasks(object: &Map<String, Value>) -> Option<Vec<BackgroundTask>> {
-    let tasks = object.get("background_tasks")?.as_array()?;
-    Some(
-        tasks
-            .iter()
-            .filter_map(|task| {
-                let task = task.as_object()?;
-                Some(BackgroundTask {
-                    id: text(task, "id")?,
-                    kind: text(task, "type")?,
-                    status: text(task, "status")?,
-                })
+    object
+        .get("background_tasks")?
+        .as_array()?
+        .iter()
+        .map(|task| {
+            let task = task.as_object()?;
+            Some(BackgroundTask {
+                id: text(task, "id").filter(|id| is_valid_id(id))?,
+                kind: text(task, "type"),
+                status: text(task, "status"),
             })
-            .collect(),
-    )
+        })
+        .collect()
 }

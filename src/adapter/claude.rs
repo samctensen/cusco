@@ -275,16 +275,22 @@ impl Session {
     }
 
     /// Closes the session's agents that a `Stop` no longer lists as
-    /// background tasks. A `Stop` without the list tells us nothing.
+    /// background tasks. A `Stop` without the list tells us nothing, and an
+    /// agent with an open request is still waiting, whatever the list says.
     fn reconcile_agents(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
         let Some(tasks) = &record.background_tasks else {
             return;
         };
         let listed: HashSet<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
+        let waiting: HashSet<&str> = self
+            .requests
+            .values()
+            .map(|request| request.actor.as_str())
+            .collect();
         let finished: Vec<String> = self
             .agents
             .keys()
-            .filter(|agent| !listed.contains(agent.as_str()))
+            .filter(|agent| !listed.contains(agent.as_str()) && !waiting.contains(agent.as_str()))
             .cloned()
             .collect();
         for agent in finished {
