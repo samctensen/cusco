@@ -1,0 +1,5 @@
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"UserPromptSubmit"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"Stop"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"SubagentStart","agent_id":"a9"}
+{"client":"claude","session_id":"s1","event":"SessionEnd"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"PostToolUse","tool_name":"Bash","tool_use_id":"tu1","digest":"d1"}

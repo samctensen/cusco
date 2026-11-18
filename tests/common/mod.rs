@@ -33,6 +33,29 @@ pub fn short_temp_dir(tag: &str) -> TempDir {
     TempDir(path)
 }
 
+/// Replays `tests/fixtures/<fixture>.jsonl` through an adapter into a fresh
+/// tree. Each line is one `HookRecord`; line n is applied at n seconds.
+pub fn replay(adapter: &mut dyn cusco::adapter::Adapter, fixture: &str) -> Tree {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(format!("{fixture}.jsonl"));
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut tree = Tree::new(&[adapter.client()], STALE_AFTER, 0);
+    for (n, line) in text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        let record: cusco::record::HookRecord = serde_json::from_str(line)
+            .unwrap_or_else(|error| panic!("{fixture}:{}: {error}", n + 1));
+        let at = n as Millis * 1000;
+        for event in adapter.handle(&record, at) {
+            tree.apply(event, at);
+        }
+    }
+    tree
+}
+
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
 pub fn run_cusco(args: &[&str], dir: &Path, stdin: &str) -> Output {
     run_cusco_env(args, dir, &[], stdin)

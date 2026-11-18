@@ -1,0 +1,2 @@
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"UserPromptSubmit"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"PreToolUse","tool_name":"AskUserQuestion","tool_use_id":"tu5","digest":"d5"}

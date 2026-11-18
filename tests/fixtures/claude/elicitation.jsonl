@@ -1,0 +1,3 @@
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"UserPromptSubmit"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"Elicitation","elicitation_id":"e1"}
+{"client":"claude","session_id":"s1","turn_id":"p1","event":"ElicitationResult","elicitation_id":"e1"}
