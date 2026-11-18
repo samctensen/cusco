@@ -37,6 +37,38 @@ fn list_finds_process_launched_through_a_symlink() {
     child.wait().unwrap();
 }
 
+/// Codex Desktop runs a supervisor whose child is the app server, both named
+/// `codex`. Hooks only ever claim the nearer one, so the supervisor must not
+/// become a process node that no session will ever claim.
+#[test]
+fn list_skips_a_match_that_is_an_ancestor_of_another() {
+    let dir = short_temp_dir("nested");
+    std::fs::create_dir(dir.path().join("outer")).unwrap();
+    std::fs::create_dir(dir.path().join("inner")).unwrap();
+    let outer = dir.path().join("outer/codex");
+    let inner = dir.path().join("inner/codex");
+    signed_copy("/bin/zsh", &outer);
+    signed_copy("/bin/sleep", &inner);
+    let mut parent = std::process::Command::new(&outer)
+        .arg("-c")
+        .arg(format!("{} 30; :", inner.display()))
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let found = cusco::process::list_processes(&[("codex", "codex".into())]);
+    let child = found
+        .iter()
+        .map(|(_, pid)| *pid)
+        .find(|pid| cusco::process::parent_pid(*pid) == Some(parent.id()));
+    assert!(child.is_some(), "{found:?}");
+    assert!(!found.contains(&("codex", parent.id())), "{found:?}");
+    let _ = std::process::Command::new("kill")
+        .arg(child.unwrap().to_string())
+        .status();
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+}
+
 #[test]
 fn watch_exit_fires_on_kill_and_on_dead_pid() {
     let dir = short_temp_dir("exit");

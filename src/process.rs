@@ -166,7 +166,8 @@ pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static s
         .iter()
         .map(|(client, executable)| (*client, resolve_executable(executable)))
         .collect();
-    pids.into_iter()
+    let matches = pids
+        .into_iter()
         .filter(|pid| *pid > 1)
         .filter_map(|pid| {
             let pid = pid as u32;
@@ -176,7 +177,31 @@ pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static s
                 .find(|(_, executable)| process_matches(pid, &path, executable))
                 .map(|(client, _)| (*client, pid))
         })
+        .collect::<Vec<_>>();
+    // Hooks claim the nearest matching ancestor, so a match that is itself
+    // an ancestor of another match (a supervisor) would never be claimed.
+    let supervisors: std::collections::HashSet<(&'static str, u32)> = matches
+        .iter()
+        .flat_map(|(client, pid)| {
+            ancestors(*pid)
+                .into_iter()
+                .map(move |above| (*client, above))
+        })
+        .collect();
+    matches
+        .into_iter()
+        .filter(|found| !supervisors.contains(found))
         .collect()
+}
+
+fn ancestors(pid: u32) -> Vec<u32> {
+    let mut found = Vec::new();
+    let mut current = pid;
+    while let Some(parent) = parent_pid(current).filter(|parent| *parent > 1) {
+        found.push(parent);
+        current = parent;
+    }
+    found
 }
 
 /// Calls `on_exit` from a new thread when process `pid` exits, or right away
