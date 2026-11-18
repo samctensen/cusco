@@ -56,6 +56,93 @@ pub fn replay(adapter: &mut dyn cusco::adapter::Adapter, fixture: &str) -> Tree 
     tree
 }
 
+pub fn config(dir: &Path) -> cusco::server::Config {
+    cusco::server::Config {
+        dir: dir.to_path_buf(),
+        stale_after: 2_000,
+        subscriber_queue: 256,
+        executables: Vec::new(),
+    }
+}
+
+pub fn start(dir: &Path) -> cusco::server::Server {
+    cusco::server::serve(config(dir)).unwrap()
+}
+
+const WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Connects to the API socket and sends one request line.
+pub fn connect(dir: &Path, request: &str) -> std::io::BufReader<std::os::unix::net::UnixStream> {
+    let mut stream = std::os::unix::net::UnixStream::connect(dir.join("api.sock")).unwrap();
+    stream.set_read_timeout(Some(WAIT)).unwrap();
+    writeln!(stream, "{request}").unwrap();
+    std::io::BufReader::new(stream)
+}
+
+pub fn next_json(reader: &mut impl std::io::BufRead) -> serde_json::Value {
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap();
+    serde_json::from_str(&line).unwrap_or_else(|error| panic!("{error}: {line:?}"))
+}
+
+pub fn next_line_is_eof(reader: &mut impl std::io::BufRead) -> bool {
+    let mut line = String::new();
+    reader.read_line(&mut line).unwrap() == 0
+}
+
+/// Reads messages, keeping a map of row id to state, until `done` holds.
+pub fn wait_for_rows(
+    reader: &mut impl std::io::BufRead,
+    done: impl Fn(&std::collections::HashMap<String, String>) -> bool,
+) -> std::collections::HashMap<String, String> {
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut rows = std::collections::HashMap::new();
+    loop {
+        assert!(std::time::Instant::now() < deadline, "timed out: {rows:?}");
+        let message = next_json(reader);
+        let state = |row: &serde_json::Value| {
+            (
+                row["id"].as_str().unwrap().to_string(),
+                row["state"].as_str().unwrap().to_string(),
+            )
+        };
+        match message["type"].as_str().unwrap() {
+            "snapshot" => rows.extend(message["rows"].as_array().unwrap().iter().map(state)),
+            "upsert" => {
+                let (id, row_state) = state(&message["row"]);
+                rows.insert(id, row_state);
+            }
+            "remove" => {
+                rows.remove(message["id"].as_str().unwrap());
+            }
+            other => panic!("unexpected message type {other}"),
+        }
+        if done(&rows) {
+            return rows;
+        }
+    }
+}
+
+/// Repeats a `get` until its snapshot satisfies `done`.
+pub fn wait_for_snapshot(
+    dir: &Path,
+    request: &str,
+    done: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + WAIT;
+    loop {
+        let snapshot = next_json(&mut connect(dir, request));
+        if done(&snapshot) {
+            return snapshot;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out: {snapshot}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
 pub fn run_cusco(args: &[&str], dir: &Path, stdin: &str) -> Output {
     run_cusco_env(args, dir, &[], stdin)

@@ -140,6 +140,25 @@ impl HookRecord {
     }
 }
 
+impl HookRecord {
+    /// Whether every id that can become part of a node path is valid. The
+    /// service checks this on each datagram, since anything running as the
+    /// user can write to the ingest socket.
+    pub fn has_valid_ids(&self) -> bool {
+        is_valid_id(&self.session_id)
+            && [
+                &self.turn_id,
+                &self.agent_id,
+                &self.tool_use_id,
+                &self.elicitation_id,
+                &self.digest,
+            ]
+            .into_iter()
+            .flatten()
+            .all(|id| is_valid_id(id))
+    }
+}
+
 /// SHA-256 over the tool name, a newline and the tool input serialized with
 /// sorted keys. Returns the first 16 bytes as lowercase hex.
 pub fn tool_digest(tool_name: &str, tool_input: &Value) -> String {
@@ -158,14 +177,14 @@ fn text(object: &Map<String, Value>, field: &str) -> Option<String> {
 }
 
 /// An id becomes part of a node path, so it must be short and contain no `/`.
+fn is_valid_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= MAX_ID_BYTES && !value.contains('/')
+}
+
 fn id(object: &Map<String, Value>, field: &'static str) -> Result<Option<String>, RecordError> {
     match object.get(field) {
         None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value))
-            if !value.is_empty() && value.len() <= MAX_ID_BYTES && !value.contains('/') =>
-        {
-            Ok(Some(value.clone()))
-        }
+        Some(Value::String(value)) if is_valid_id(value) => Ok(Some(value.clone())),
         Some(_) => Err(RecordError::InvalidId(field)),
     }
 }

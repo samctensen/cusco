@@ -72,6 +72,33 @@ fn ids_with_slash_or_too_long_are_rejected() {
 }
 
 #[test]
+fn has_valid_ids_checks_every_path_id() {
+    let valid = HookRecord {
+        client: "claude".into(),
+        event: "Stop".into(),
+        session_id: "s1".into(),
+        digest: Some("d1".into()),
+        ..Default::default()
+    };
+    assert!(valid.has_valid_ids());
+    let injected = HookRecord {
+        session_id: "s9/turn:x".into(),
+        ..valid.clone()
+    };
+    assert!(!injected.has_valid_ids());
+    let empty_agent = HookRecord {
+        agent_id: Some(String::new()),
+        ..valid.clone()
+    };
+    assert!(!empty_agent.has_valid_ids());
+    let long_digest = HookRecord {
+        digest: Some("d".repeat(129)),
+        ..valid
+    };
+    assert!(!long_digest.has_valid_ids());
+}
+
+#[test]
 fn missing_session_id_is_rejected() {
     assert_eq!(
         HookRecord::from_payload("claude", &json!({"hook_event_name": "Stop"})),
