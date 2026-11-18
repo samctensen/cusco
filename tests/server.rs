@@ -169,3 +169,23 @@ fn stale_socket_is_replaced_and_second_serve_refused() {
     assert!(!dir.path().join("api.sock").exists());
     assert!(!dir.path().join("ingest.sock").exists());
 }
+
+#[test]
+fn serve_leaves_an_existing_directory_permissions_alone() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = short_temp_dir("perm");
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _server = start(dir.path());
+    let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o755);
+}
+
+#[test]
+fn serve_creates_a_missing_directory_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let parent = short_temp_dir("perm-new");
+    let dir = parent.path().join("cusco");
+    let _server = cusco::server::serve(config(&dir)).unwrap();
+    let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+}

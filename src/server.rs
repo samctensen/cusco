@@ -17,7 +17,7 @@ use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -62,8 +62,13 @@ pub struct Server {
 }
 
 pub fn serve(config: Config) -> io::Result<Server> {
-    std::fs::create_dir_all(&config.dir)?;
-    std::fs::set_permissions(&config.dir, std::fs::Permissions::from_mode(0o700))?;
+    // A directory Cusco creates is private; an existing one is left as is.
+    if !config.dir.exists() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&config.dir)?;
+    }
     let api_path = config.dir.join(API_SOCKET);
     let ingest_path = config.dir.join(INGEST_SOCKET);
     if UnixStream::connect(&api_path).is_ok() {
