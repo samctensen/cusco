@@ -170,14 +170,21 @@ fn stale_socket_is_replaced_and_second_serve_refused() {
     assert!(!dir.path().join("ingest.sock").exists());
 }
 
+/// Other users must not reach the sockets, and serve must not silently
+/// change permissions on a directory it didn't create: it refuses instead.
 #[test]
-fn serve_leaves_an_existing_directory_permissions_alone() {
+fn serve_refuses_a_directory_others_can_reach() {
     use std::os::unix::fs::PermissionsExt;
     let dir = short_temp_dir("perm");
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let _server = start(dir.path());
+    let refused = cusco::server::serve(config(dir.path()));
+    assert_eq!(
+        refused.err().map(|error| error.kind()),
+        Some(std::io::ErrorKind::PermissionDenied)
+    );
     let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o755);
+    assert!(!dir.path().join("api.sock").exists());
 }
 
 #[test]

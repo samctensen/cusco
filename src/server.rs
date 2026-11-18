@@ -17,9 +17,9 @@ use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -61,14 +61,37 @@ pub struct Server {
     threads: Vec<JoinHandle<()>>,
 }
 
-pub fn serve(config: Config) -> io::Result<Server> {
-    // A directory Cusco creates is private; an existing one is left as is.
-    if !config.dir.exists() {
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&config.dir)?;
+/// Refuses a directory other users could reach the sockets through. Cusco
+/// creates its own directory as 0700; it never changes the permissions of a
+/// directory it didn't create.
+fn check_private(dir: &Path) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(dir)?;
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let owner = unsafe { libc::geteuid() };
+    let reason = if !metadata.is_dir() {
+        Some("is not a directory")
+    } else if metadata.uid() != owner {
+        Some("is owned by another user")
+    } else if metadata.mode() & 0o077 != 0 {
+        Some("is accessible to other users (expected mode 0700)")
+    } else {
+        None
+    };
+    match reason {
+        None => Ok(()),
+        Some(reason) => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} {reason}", dir.display()),
+        )),
     }
+}
+
+pub fn serve(config: Config) -> io::Result<Server> {
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&config.dir)?;
+    check_private(&config.dir)?;
     let api_path = config.dir.join(API_SOCKET);
     let ingest_path = config.dir.join(INGEST_SOCKET);
     if UnixStream::connect(&api_path).is_ok() {
