@@ -123,3 +123,40 @@ fn resumed_session_is_tracked_again() {
         Some(State::NeedsInput)
     );
 }
+
+#[test]
+fn activity_opens_a_turn_seen_for_the_first_time() {
+    let t = run("claude/restart_mid_turn");
+    assert_eq!(t.state("/claude"), Some(State::Working));
+    assert!(t.contains("/claude/session:s1/turn:p1"));
+}
+
+#[test]
+fn approval_from_an_unseen_background_agent_is_shown() {
+    let t = run("claude/restart_background_approval");
+    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
+    assert_eq!(
+        t.cause("/claude").as_deref(),
+        Some("/claude/session:s1/turn:p1/agent:a7/request:d7")
+    );
+}
+
+#[test]
+fn unseen_background_agent_finishing_leaves_nothing_open() {
+    let t = run("claude/restart_background_approval_done");
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+    assert!(!t.contains("/claude/session:s1/turn:p1"));
+}
+
+#[test]
+fn late_subagent_start_after_stop_opens_nothing() {
+    let t = run("claude/late_subagent_start");
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+    assert!(!t.contains("/claude/session:s1/turn:p1/agent:a9"));
+}
+
+#[test]
+fn subagent_start_after_its_stop_opens_nothing() {
+    let t = run("claude/stop_before_start");
+    assert!(!t.contains("/claude/session:s1/turn:p1/agent:a1"));
+}

@@ -80,3 +80,11 @@ fn resumed_session_is_tracked_again() {
         Some(State::NeedsInput)
     );
 }
+
+#[test]
+fn activity_opens_a_turn_seen_for_the_first_time() {
+    assert_eq!(
+        run("codex/restart_mid_turn").state("/codex"),
+        Some(State::Working)
+    );
+}

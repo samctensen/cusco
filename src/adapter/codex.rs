@@ -4,7 +4,7 @@
 //! can host many sessions, so this adapter tracks less than the Claude one.
 
 use super::{
-    Adapter, EndedSessions, Turns, agent_path, close, confirm, open, open_session, request_path,
+    Adapter, EndedSessions, Turns, agent_path, close, open, open_session, request_path,
     session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
@@ -86,6 +86,7 @@ impl Session {
                     return;
                 };
                 let id = record.digest.clone().unwrap_or_else(|| "approval".into());
+                self.enter_turn(session, &turn, events);
                 let path = turn_path(session, &turn);
                 events.push(open(request_path(&path, &id), with_reason("approval")));
                 self.approvals.entry(turn).or_default().push(id);
@@ -97,7 +98,9 @@ impl Session {
                     for id in self.approvals.remove(&turn).unwrap_or_default() {
                         events.push(close(request_path(&path, &id), Outcome::Ok));
                     }
-                    events.push(confirm(path));
+                }
+                if let Some(turn) = self.open_turn_of(record) {
+                    self.enter_turn(session, &turn, events);
                 }
             }
             "PostToolUse" => {
@@ -109,11 +112,14 @@ impl Session {
                         open_ids.remove(index);
                         events.push(close(request_path(&path, digest), Outcome::Ok));
                     }
-                    events.push(confirm(path));
+                }
+                if let Some(turn) = self.open_turn_of(record) {
+                    self.enter_turn(session, &turn, events);
                 }
             }
             "SubagentStart" => {
                 if let (Some(agent), Some(turn)) = (&record.agent_id, self.open_turn_of(record)) {
+                    self.enter_turn(session, &turn, events);
                     events.push(open(
                         agent_path(&turn_path(session, &turn), agent),
                         Attrs::new(),
@@ -133,6 +139,14 @@ impl Session {
             }
             _ => {}
         }
+    }
+
+    /// Opens the turn, or confirms it if it's already open. A turn Cusco
+    /// hasn't seen (for example across a restart) is opened by its first
+    /// activity.
+    fn enter_turn(&mut self, session: &str, turn: &str, events: &mut Vec<Event>) {
+        events.push(open(turn_path(session, turn), Attrs::new()));
+        self.turns.adopt(turn);
     }
 
     /// The record's turn, unless it already closed: late records never open

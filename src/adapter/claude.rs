@@ -1,7 +1,7 @@
 //! The Claude Code adapter. See the design's "Claude Code" adapter section.
 
 use super::{
-    Adapter, EndedSessions, Turns, agent_path, close, confirm, open, open_session, request_path,
+    Adapter, EndedSessions, Turns, agent_path, close, open, open_session, request_path,
     session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
@@ -85,6 +85,20 @@ struct Session {
     calls: HashMap<String, VecDeque<(String, String)>>,
     /// Open requests by request id.
     requests: HashMap<String, Request>,
+    /// Subagents that have stopped. A late record never reopens one.
+    stopped: HashSet<String>,
+}
+
+/// Why an actor is being resolved, which decides whether a record from an
+/// agent Cusco hasn't seen may open it.
+#[derive(Clone, Copy, PartialEq)]
+enum Purpose {
+    /// A `SubagentStart`. One arriving after its turn closed is late, so it
+    /// opens nothing.
+    Start,
+    /// Tool or request activity. An agent that is acting is alive, even if
+    /// Cusco missed its start (for example across a restart).
+    Activity,
 }
 
 struct Request {
@@ -134,12 +148,10 @@ impl Session {
                 self.end_turn(session, record.turn_id.clone(), Outcome::Cancelled, events);
             }
             "SubagentStart" => {
-                if let Some(actor) = self.actor(session, record)
-                    && actor.may_open
+                if let Some(actor) = self.actor(session, record, Purpose::Start)
                     && !actor.key.is_empty()
                 {
-                    events.push(open(actor.path, Attrs::new()));
-                    self.agents.insert(actor.key, actor.turn);
+                    self.enter(session, &actor, events);
                 }
             }
             "SubagentStop" => {
@@ -149,23 +161,24 @@ impl Session {
             }
             "PreToolUse" => self.pre_tool_use(session, record, events),
             "PermissionRequest" => {
-                if let Some(actor) = self.actor(session, record) {
+                if let Some(actor) = self.actor(session, record, Purpose::Activity) {
                     let id = self.approval_id(&actor, record);
-                    self.open_request(actor, id, RequestKind::Approval, events);
+                    self.open_request(session, actor, id, RequestKind::Approval, events);
                 }
             }
             "PostToolUse" | "PostToolUseFailure" => {
                 self.close_tool_requests(record, Outcome::Ok, events);
-                if let Some(actor) = self.actor(session, record) {
-                    events.push(confirm(actor.path));
+                if let Some(actor) = self.actor(session, record, Purpose::Activity) {
+                    self.enter(session, &actor, events);
                 }
             }
             "PermissionDenied" => self.close_tool_requests(record, Outcome::Cancelled, events),
             "Elicitation" => {
-                if let (Some(actor), Some(id)) =
-                    (self.actor(session, record), record.elicitation_id.clone())
-                {
-                    self.open_request(actor, id, RequestKind::Input, events);
+                if let (Some(actor), Some(id)) = (
+                    self.actor(session, record, Purpose::Activity),
+                    record.elicitation_id.clone(),
+                ) {
+                    self.open_request(session, actor, id, RequestKind::Input, events);
                 }
             }
             "ElicitationResult" => {
@@ -177,14 +190,17 @@ impl Session {
         }
     }
 
-    fn actor(&self, session: &str, record: &HookRecord) -> Option<Actor> {
+    fn actor(&self, session: &str, record: &HookRecord, purpose: Purpose) -> Option<Actor> {
         match &record.agent_id {
             Some(agent) => {
                 // A known agent stays under the turn that started it, even if
                 // later records carry a newer prompt id.
                 let known = self.agents.get(agent);
                 let turn = known.cloned().or_else(|| self.turns.of(record))?;
-                let may_open = known.is_some() || !self.turns.is_closed(&turn);
+                let may_open = !self.stopped.contains(agent)
+                    && (known.is_some()
+                        || !self.turns.is_closed(&turn)
+                        || purpose == Purpose::Activity);
                 let path = agent_path(&turn_path(session, &turn), agent);
                 Some(Actor {
                     key: agent.clone(),
@@ -204,6 +220,27 @@ impl Session {
                     may_open,
                 })
             }
+        }
+    }
+
+    /// Opens the actor's node, or confirms it if it's already open. This is
+    /// how a turn or agent Cusco hasn't seen gets opened. Opening beneath a
+    /// turn that already ended (a background agent) closes that turn again,
+    /// so it isn't revived.
+    fn enter(&mut self, session: &str, actor: &Actor, events: &mut Vec<Event>) {
+        if !actor.may_open {
+            return;
+        }
+        events.push(open(actor.path.clone(), Attrs::new()));
+        if actor.key.is_empty() {
+            self.turns.adopt(&actor.turn);
+        } else {
+            self.agents
+                .entry(actor.key.clone())
+                .or_insert_with(|| actor.turn.clone());
+        }
+        if self.turns.is_closed(&actor.turn) {
+            events.push(close(turn_path(session, &actor.turn), Outcome::Ok));
         }
     }
 
@@ -262,6 +299,7 @@ impl Session {
         outcome: Outcome,
         events: &mut Vec<Event>,
     ) {
+        self.stopped.insert(agent.to_string());
         if let Some(turn) = self.agents.remove(agent) {
             events.push(close(
                 agent_path(&turn_path(session, &turn), agent),
@@ -273,7 +311,7 @@ impl Session {
     }
 
     fn pre_tool_use(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
-        let Some(actor) = self.actor(session, record) else {
+        let Some(actor) = self.actor(session, record, Purpose::Activity) else {
             return;
         };
         // A new tool call means the actor has moved on, so any approval it
@@ -299,9 +337,9 @@ impl Session {
         match (&record.tool_name, &record.tool_use_id) {
             (Some(tool), Some(tool_use_id)) if tool == "AskUserQuestion" => {
                 let id = tool_use_id.clone();
-                self.open_request(actor, id, RequestKind::Question, events);
+                self.open_request(session, actor, id, RequestKind::Question, events);
             }
-            _ => events.push(confirm(actor.path)),
+            _ => self.enter(session, &actor, events),
         }
     }
 
@@ -319,6 +357,7 @@ impl Session {
 
     fn open_request(
         &mut self,
+        session: &str,
         actor: Actor,
         id: String,
         kind: RequestKind,
@@ -327,11 +366,9 @@ impl Session {
         if !actor.may_open {
             return;
         }
+        self.enter(session, &actor, events);
         let path = request_path(&actor.path, &id);
         events.push(open(path.clone(), with_reason(kind.reason())));
-        if !actor.key.is_empty() {
-            self.agents.entry(actor.key.clone()).or_insert(actor.turn);
-        }
         self.requests.insert(
             id,
             Request {

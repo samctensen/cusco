@@ -41,14 +41,6 @@ pub(crate) fn close(id: String, outcome: Outcome) -> Event {
     Event::Close { id, outcome }
 }
 
-/// Confirms an existing node without ever creating one.
-pub(crate) fn confirm(id: String) -> Event {
-    Event::Attr {
-        id,
-        attrs: Attrs::new(),
-    }
-}
-
 /// Opens (or refreshes) a session with the attributes a record carries.
 pub(crate) fn open_session(path: &str, record: &HookRecord) -> Event {
     let mut attrs = Attrs::new();
@@ -103,6 +95,14 @@ impl Turns {
         }
         let previous = self.open.replace(turn.clone()).filter(|open| *open != turn);
         Some((turn, previous))
+    }
+
+    /// Makes a turn seen for the first time the open turn, unless it closed
+    /// or another turn is open.
+    pub(crate) fn adopt(&mut self, turn: &str) {
+        if self.open.is_none() && !self.closed.contains(turn) {
+            self.open = Some(turn.to_string());
+        }
     }
 
     /// Marks a turn closed (the open turn when `turn` is `None`). Returns it
