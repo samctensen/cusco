@@ -148,13 +148,13 @@ fn depth_of(id: &str) -> usize {
 }
 
 #[derive(Clone, Debug)]
-struct Node {
-    kind: Kind,
-    open: bool,
+pub(crate) struct Node {
+    pub(crate) kind: Kind,
+    pub(crate) open: bool,
     confirmed: bool,
-    opened_at: Millis,
+    pub(crate) opened_at: Millis,
     last_confirmed: Millis,
-    attrs: Attrs,
+    pub(crate) attrs: Attrs,
 }
 
 impl Node {
@@ -170,9 +170,13 @@ impl Node {
 }
 
 pub struct Tree {
-    nodes: BTreeMap<String, Node>,
+    pub(crate) nodes: BTreeMap<String, Node>,
     clients: Vec<Client>,
     stale_after: Millis,
+    /// Each node's derived state and when it last changed.
+    pub(crate) states: BTreeMap<String, (State, Millis)>,
+    /// The rows last returned by `take_changes`.
+    pub(crate) published: BTreeMap<String, crate::row::Row>,
 }
 
 impl Tree {
@@ -180,12 +184,34 @@ impl Tree {
         let mut nodes = BTreeMap::new();
         nodes.insert("/".to_string(), Node::new(Kind::Machine, at));
         for client in clients {
-            nodes.insert(format!("/{}", client.name), Node::new(Kind::Client, at));
+            let mut node = Node::new(Kind::Client, at);
+            node.attrs
+                .insert("observes".into(), serde_json::json!(client.observes));
+            nodes.insert(format!("/{}", client.name), node);
         }
-        Tree {
+        let mut tree = Tree {
             nodes,
             clients: clients.to_vec(),
             stale_after,
+            states: BTreeMap::new(),
+            published: BTreeMap::new(),
+        };
+        tree.refresh_states(at);
+        tree
+    }
+
+    /// Records `at` as the `since` time of every node whose state changed.
+    fn refresh_states(&mut self, at: Millis) {
+        let current: BTreeMap<String, State> = self
+            .nodes
+            .keys()
+            .filter_map(|id| Some((id.clone(), self.state(id)?)))
+            .collect();
+        self.states.retain(|id, _| current.contains_key(id));
+        for (id, state) in current {
+            if self.states.get(&id).map(|(known, _)| *known) != Some(state) {
+                self.states.insert(id, (state, at));
+            }
         }
     }
 
@@ -222,6 +248,7 @@ impl Tree {
             Event::Sync { scope, nodes } => self.sync(&scope, nodes, at),
         }
         self.prune();
+        self.refresh_states(at);
     }
 
     /// Unconfirms open turns, agents and requests that have heard nothing for
@@ -237,6 +264,7 @@ impl Tree {
                 node.confirmed = false;
             }
         }
+        self.refresh_states(at);
     }
 
     /// When the next open turn, agent or request goes stale, if any.
@@ -268,6 +296,7 @@ impl Tree {
             self.close(&format!("/{}/process:{pid}", client.name), Outcome::Ok, at);
         }
         self.prune();
+        self.refresh_states(at);
         sessions
     }
 
@@ -374,7 +403,7 @@ impl Tree {
         self.confirm(id, at);
     }
 
-    fn close(&mut self, id: &str, _outcome: Outcome, _at: Millis) {
+    fn close(&mut self, id: &str, outcome: Outcome, at: Millis) {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
@@ -382,6 +411,14 @@ impl Tree {
             return;
         }
         let kind = node.kind;
+        if kind == Kind::Turn
+            && let Some(session) = parent_of(id).and_then(|path| self.nodes.get_mut(path))
+        {
+            session.attrs.insert(
+                "last_turn".into(),
+                serde_json::json!({"outcome": outcome, "ended_at": rfc3339(at)}),
+            );
+        }
         let prefix = format!("{id}/");
         for (path, node) in self.nodes.range_mut(prefix.clone()..) {
             if !path.starts_with(&prefix) {
@@ -414,7 +451,10 @@ impl Tree {
         }
     }
 
-    fn descendants<'a>(&'a self, id: &str) -> impl Iterator<Item = (&'a String, &'a Node)> + 'a {
+    pub(crate) fn descendants<'a>(
+        &'a self,
+        id: &str,
+    ) -> impl Iterator<Item = (&'a String, &'a Node)> + 'a {
         let prefix = if id == "/" {
             "/".to_string()
         } else {
@@ -435,7 +475,7 @@ impl Tree {
     }
 
     /// The derived state of a node and the node responsible for it.
-    fn evaluate(&self, id: &str) -> Option<(State, Option<String>)> {
+    pub(crate) fn evaluate(&self, id: &str) -> Option<(State, Option<String>)> {
         self.nodes.get(id)?;
         let mut best: [Option<(&String, &Node)>; 3] = [None, None, None];
         for (path, node) in self.subtree(id).filter(|(_, node)| node.open) {
@@ -486,4 +526,10 @@ impl Node {
             attrs: Attrs::new(),
         }
     }
+}
+
+/// Formats a time as RFC 3339 with milliseconds, the form used on the wire.
+pub(crate) fn rfc3339(at: Millis) -> String {
+    let time = std::time::UNIX_EPOCH + std::time::Duration::from_millis(at);
+    humantime::format_rfc3339_millis(time).to_string()
 }
