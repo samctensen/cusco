@@ -246,6 +246,7 @@ parent's `session_id`.
 | `UserPromptSubmit` | `open` turn, keyed by `turn_id`. |
 | `PermissionRequest` | `open` a request with reason `approval` under the turn. |
 | `PreToolUse` | `close` the turn's open approval: a new tool call means it was answered. |
+| `PostToolUse` | `close` the turn's open approval if its tool input digest matches. |
 | `SubagentStart` / `SubagentStop` | `open` / `close` agent, keyed by `agent_id`, under the turn. |
 | `Stop` | `close` turn as `ok`. |
 | `Interrupt` | `close` turn as `cancelled`. Fires for the main thread only. |
