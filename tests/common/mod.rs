@@ -144,9 +144,14 @@ pub fn wait_for_snapshot(
 
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
 pub fn run_cusco(args: &[&str], dir: &Path, stdin: &str) -> Output {
+    run_cusco_env(args, dir, &[], stdin)
+}
+
+pub fn run_cusco_env(args: &[&str], dir: &Path, envs: &[(&str, &Path)], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_cusco"))
         .args(args)
         .env("CUSCO_DIR", dir)
+        .envs(envs.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

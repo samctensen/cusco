@@ -166,11 +166,34 @@ pub fn tool_digest(tool_name: &str, tool_input: &Value) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tool_name.as_bytes());
     hasher.update(b"\n");
-    hasher.update(tool_input.to_string().as_bytes());
+    hasher.update(canonical_json(tool_input).as_bytes());
     hasher.finalize()[..16]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// JSON with object keys sorted at every level, so the same input hashes the
+/// same whatever order its keys arrived in.
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            let body: Vec<String> = entries
+                .into_iter()
+                .map(|(key, value)| {
+                    format!("{}:{}", Value::from(key.as_str()), canonical_json(value))
+                })
+                .collect();
+            format!("{{{}}}", body.join(","))
+        }
+        Value::Array(items) => {
+            let body: Vec<String> = items.iter().map(canonical_json).collect();
+            format!("[{}]", body.join(","))
+        }
+        other => other.to_string(),
+    }
 }
 
 fn text(object: &Map<String, Value>, field: &str) -> Option<String> {

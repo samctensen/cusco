@@ -188,3 +188,51 @@ fn command_line() {
     let snapshot: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(snapshot["rows"][0]["state"], "working");
 }
+
+/// Setup adds the hook to every event and is safe to repeat; removing it
+/// leaves other settings and other tools' hooks exactly as they were.
+#[test]
+fn setup_adds_and_removes_hooks() {
+    let dir = temp_dir("setup");
+    let claude = dir.path().join("claude");
+    let codex = dir.path().join("codex");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::create_dir_all(&codex).unwrap();
+    let settings = claude.join("settings.json");
+    let original = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\"\n          }\n        ]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
+    std::fs::write(&settings, original).unwrap();
+    let envs = [
+        ("CLAUDE_CONFIG_DIR", claude.as_path()),
+        ("CODEX_HOME", codex.as_path()),
+    ];
+    let setup = |args: &[&str]| run_cusco_env(args, dir.path(), &envs, "");
+
+    assert!(setup(&["setup"]).status.success());
+    let added = std::fs::read_to_string(&settings).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&added).unwrap();
+    let keys: Vec<_> = parsed.as_object().unwrap().keys().cloned().collect();
+    assert_eq!(keys, ["theme", "hooks", "model"], "key order is kept");
+    assert_eq!(parsed["hooks"]["Stop"].as_array().unwrap().len(), 2);
+    assert!(
+        parsed["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with("cusco hook claude")
+    );
+    assert!(codex.join("hooks.json").exists());
+
+    assert!(setup(&["setup"]).status.success());
+    assert_eq!(
+        std::fs::read_to_string(&settings).unwrap(),
+        added,
+        "repeating changes nothing"
+    );
+
+    assert!(setup(&["setup", "--remove"]).status.success());
+    let removed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        removed,
+        serde_json::from_str::<serde_json::Value>(original).unwrap()
+    );
+}

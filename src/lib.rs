@@ -8,4 +8,5 @@ pub mod process;
 pub mod record;
 pub mod row;
 pub mod server;
+pub mod setup;
 pub mod tree;
