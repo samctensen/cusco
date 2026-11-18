@@ -1,3 +1,0 @@
-{"client":"codex","session_id":"s1","turn_id":"t1","event":"UserPromptSubmit"}
-{"client":"codex","session_id":"s1","turn_id":"t1","event":"SubagentStart","agent_id":"a1","agent_type":"worker"}
-{"client":"codex","session_id":"s1","turn_id":"t1","event":"Stop"}

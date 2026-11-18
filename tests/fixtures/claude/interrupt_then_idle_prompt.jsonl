@@ -1,2 +1,0 @@
-{"client":"claude","session_id":"s1","turn_id":"p1","event":"UserPromptSubmit"}
-{"client":"claude","session_id":"s1","turn_id":"p1","event":"Notification","notification_type":"idle_prompt"}

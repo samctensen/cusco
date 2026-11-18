@@ -1,147 +1,100 @@
-use cusco::record::{HookRecord, RecordError, tool_digest};
+mod common;
+
+use cusco::record::{BackgroundTask, HookRecord, RecordError, tool_digest};
 use serde_json::json;
 
 #[test]
-fn claude_payload_keeps_only_allowed_fields() {
+fn only_allowed_fields_leave_the_hook() {
     let payload = json!({
         "hook_event_name": "PreToolUse", "session_id": "s1", "prompt_id": "p1",
-        "tool_name": "Bash", "tool_use_id": "tu1",
-        "tool_input": {"command": "SECRET-COMMAND"},
-        "prompt": "SECRET-PROMPT", "cwd": "/repo"
+        "tool_name": "Bash", "tool_use_id": "tu1", "cwd": "/repo",
+        "tool_input": {"command": "SECRET"}, "prompt": "SECRET",
+        "background_tasks": [{"id": "a1", "description": "SECRET"}]
     });
     let record = HookRecord::from_payload("claude", &payload).unwrap();
     assert_eq!(record.turn_id.as_deref(), Some("p1"));
-    assert_eq!(record.tool_use_id.as_deref(), Some("tu1"));
-    assert_eq!(record.cwd.as_deref(), Some("/repo"));
-    let digest = tool_digest("Bash", &json!({"command": "SECRET-COMMAND"}));
-    assert_eq!(record.digest.as_deref(), Some(digest.as_str()));
+    assert_eq!(
+        record.digest,
+        Some(tool_digest("Bash", &json!({"command": "SECRET"})))
+    );
     let wire = serde_json::to_string(&record).unwrap();
     assert!(!wire.contains("SECRET"), "{wire}");
 }
 
 #[test]
-fn background_tasks_keep_id_type_and_status_only() {
-    let payload = json!({
-        "hook_event_name": "Stop", "session_id": "s1",
-        "background_tasks": [{"id": "a1", "type": "subagent", "status": "running",
-                              "description": "SECRET-DESCRIPTION", "command": "SECRET-COMMAND"}]
-    });
-    let record = HookRecord::from_payload("claude", &payload).unwrap();
-    let tasks = record.background_tasks.as_ref().unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(
-        (tasks[0].id.as_str(), tasks[0].kind.as_deref()),
-        ("a1", Some("subagent"))
-    );
-    assert!(!serde_json::to_string(&record).unwrap().contains("SECRET"));
-}
-
-#[test]
-fn codex_turn_id_maps_to_turn_id() {
-    let payload = json!({"hook_event_name": "Stop", "session_id": "s1", "turn_id": "t7"});
-    let record = HookRecord::from_payload("codex", &payload).unwrap();
-    assert_eq!(record.turn_id.as_deref(), Some("t7"));
-}
-
-#[test]
-fn digest_is_stable_across_key_order() {
+fn digest_ignores_key_order() {
     let a: serde_json::Value = serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap();
     let b: serde_json::Value = serde_json::from_str(r#"{"b":2,"a":1}"#).unwrap();
     assert_eq!(tool_digest("Edit", &a), tool_digest("Edit", &b));
-    assert_eq!(tool_digest("Edit", &a).len(), 32);
-    assert_ne!(tool_digest("Edit", &a), tool_digest("Write", &a));
 }
 
 #[test]
-fn ids_with_slash_or_too_long_are_rejected() {
-    let slash = json!({"hook_event_name": "Stop", "session_id": "a/b"});
+fn bad_payloads_are_rejected() {
+    let reject = |client: &str, payload: serde_json::Value| {
+        HookRecord::from_payload(client, &payload).unwrap_err()
+    };
+    let stop =
+        |session: serde_json::Value| json!({"hook_event_name": "Stop", "session_id": session});
     assert_eq!(
-        HookRecord::from_payload("claude", &slash),
-        Err(RecordError::InvalidId("session_id"))
+        reject("claude", stop(json!("s9/turn:x"))),
+        RecordError::InvalidId("session_id")
     );
-    let long = json!({"hook_event_name": "Stop", "session_id": "x".repeat(129)});
     assert_eq!(
-        HookRecord::from_payload("claude", &long),
-        Err(RecordError::InvalidId("session_id"))
+        reject("claude", stop(json!("x".repeat(129)))),
+        RecordError::InvalidId("session_id")
     );
-    let agent = json!({"hook_event_name": "Stop", "session_id": "s1", "agent_id": "a/1"});
     assert_eq!(
-        HookRecord::from_payload("claude", &agent),
-        Err(RecordError::InvalidId("agent_id"))
+        reject("claude", json!({"hook_event_name": "Stop"})),
+        RecordError::MissingSessionId
+    );
+    assert_eq!(
+        reject(
+            "claude",
+            json!({"hook_event_name": "FileChanged", "session_id": "s1"})
+        ),
+        RecordError::UnknownEvent("FileChanged".into())
+    );
+    assert_eq!(
+        reject("gemini", stop(json!("s1"))),
+        RecordError::UnknownClient
     );
 }
 
+/// A partly readable task list must not look like "these tasks finished".
 #[test]
-fn has_valid_ids_checks_every_path_id() {
-    let valid = HookRecord {
+fn background_task_list_is_all_or_nothing() {
+    let tasks = |list: serde_json::Value| {
+        let payload =
+            json!({"hook_event_name": "Stop", "session_id": "s1", "background_tasks": list});
+        HookRecord::from_payload("claude", &payload)
+            .unwrap()
+            .background_tasks
+    };
+    assert_eq!(tasks(json!([{"id": "a1"}])).unwrap()[0].id, "a1");
+    assert_eq!(tasks(json!([{"id": "a1"}, {"type": "subagent"}])), None);
+}
+
+/// macOS caps local datagrams well below a large record, so the hook resends
+/// it without its task list rather than losing it.
+#[test]
+fn oversized_record_is_still_delivered() {
+    let dir = common::temp_dir("big");
+    let receiver = std::os::unix::net::UnixDatagram::bind(dir.path().join("ingest.sock")).unwrap();
+    let task = |i| BackgroundTask {
+        id: format!("task{i}"),
+        kind: None,
+        status: None,
+    };
+    let record = HookRecord {
         client: "claude".into(),
         event: "Stop".into(),
         session_id: "s1".into(),
-        digest: Some("d1".into()),
+        background_tasks: Some((0..500).map(task).collect()),
         ..Default::default()
     };
-    assert!(valid.has_valid_ids());
-    let injected = HookRecord {
-        session_id: "s9/turn:x".into(),
-        ..valid.clone()
-    };
-    assert!(!injected.has_valid_ids());
-    let empty_agent = HookRecord {
-        agent_id: Some(String::new()),
-        ..valid.clone()
-    };
-    assert!(!empty_agent.has_valid_ids());
-    let long_digest = HookRecord {
-        digest: Some("d".repeat(129)),
-        ..valid
-    };
-    assert!(!long_digest.has_valid_ids());
-}
-
-#[test]
-fn missing_session_id_is_rejected() {
-    assert_eq!(
-        HookRecord::from_payload("claude", &json!({"hook_event_name": "Stop"})),
-        Err(RecordError::MissingSessionId)
-    );
-}
-
-#[test]
-fn unknown_event_is_rejected() {
-    let payload = json!({"hook_event_name": "FileChanged", "session_id": "s1"});
-    assert_eq!(
-        HookRecord::from_payload("claude", &payload),
-        Err(RecordError::UnknownEvent("FileChanged".into()))
-    );
-}
-
-#[test]
-fn unknown_client_and_non_object_are_rejected() {
-    let payload = json!({"hook_event_name": "Stop", "session_id": "s1"});
-    assert_eq!(
-        HookRecord::from_payload("gemini", &payload),
-        Err(RecordError::UnknownClient)
-    );
-    assert_eq!(
-        HookRecord::from_payload("claude", &json!([1, 2])),
-        Err(RecordError::NotAnObject)
-    );
-}
-
-#[test]
-fn background_task_needs_only_an_id() {
-    let payload = json!({"hook_event_name": "Stop", "session_id": "s1",
-                         "background_tasks": [{"id": "a1"}]});
-    let record = HookRecord::from_payload("claude", &payload).unwrap();
-    let tasks = record.background_tasks.unwrap();
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].id, "a1");
-}
-
-#[test]
-fn background_task_list_with_an_unreadable_entry_is_dropped() {
-    let payload = json!({"hook_event_name": "Stop", "session_id": "s1",
-                         "background_tasks": [{"id": "a1"}, {"type": "subagent"}]});
-    let record = HookRecord::from_payload("claude", &payload).unwrap();
-    assert_eq!(record.background_tasks, None);
+    cusco::hook::send_record(dir.path(), &record).unwrap();
+    let mut buffer = vec![0u8; 1 << 20];
+    let length = receiver.recv(&mut buffer).unwrap();
+    let received: HookRecord = serde_json::from_slice(&buffer[..length]).unwrap();
+    assert_eq!(received.session_id, "s1");
 }

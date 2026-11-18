@@ -1,5 +1,0 @@
-{"client":"codex","session_id":"s1","event":"SessionStart","source":"startup"}
-{"client":"codex","session_id":"s1","event":"SessionEnd"}
-{"client":"codex","session_id":"s1","event":"SessionStart","source":"resume"}
-{"client":"codex","session_id":"s1","turn_id":"t2","event":"UserPromptSubmit"}
-{"client":"codex","session_id":"s1","turn_id":"t2","event":"PermissionRequest","tool_name":"shell","digest":"d1"}

@@ -137,7 +137,6 @@ cargo clippy --all-targets
 cargo fmt --check
 ```
 
-The adapter tests replay recorded hook sequences from `tests/fixtures/`. To
-record your own, set `CUSCO_RECORD=/path/to/file.jsonl` in the environment
-your agents run in; the hook command appends each record (allowed fields only)
-to that file.
+To see exactly what your agents send, set `CUSCO_RECORD=/path/to/file.jsonl` in
+the environment they run in; the hook command appends each record (allowed
+fields only) to that file.

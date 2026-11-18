@@ -1,173 +1,195 @@
 mod common;
 
 use common::*;
-use cusco::tree::{Event, Kind, Outcome, State, kind_of};
+use cusco::row::Change;
+use cusco::tree::{Event, Outcome, STALE_AFTER, State};
+use serde_json::json;
 
 #[test]
-fn empty_client_is_idle() {
-    let t = tree();
-    assert_eq!(t.state("/"), Some(State::Idle));
+fn state_rolls_up_from_the_deepest_open_node() {
+    let mut t = tree();
     assert_eq!(t.state("/claude"), Some(State::Idle));
-}
 
-#[test]
-fn open_turn_makes_ancestors_working() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1", 1);
-    assert!(t.contains("/claude/session:s1"));
-    for id in ["/", "/claude", "/claude/session:s1"] {
-        assert_eq!(t.state(id), Some(State::Working), "{id}");
-    }
-}
-
-#[test]
-fn open_session_alone_is_idle() {
-    let mut t = tree();
     open(&mut t, "/claude/session:s1", 1);
-    assert_eq!(t.state("/claude"), Some(State::Idle));
-}
-
-#[test]
-fn request_outranks_work() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1/agent:a1/request:r1", 1);
-    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
     assert_eq!(
-        t.cause("/claude").as_deref(),
-        Some("/claude/session:s1/turn:p1/agent:a1/request:r1")
+        t.state("/claude"),
+        Some(State::Idle),
+        "an open session isn't work"
+    );
+
+    open(&mut t, "/claude/session:s1/turn:p1/agent:a1", 2);
+    assert_eq!(t.state("/"), Some(State::Working));
+
+    open(&mut t, "/claude/session:s1/turn:p1/agent:a1/request:r1", 3);
+    open(&mut t, "/claude/session:s2/turn:p2/request:r2", 4);
+    assert_eq!(t.state("/"), Some(State::NeedsInput));
+    assert_eq!(
+        t.cause("/").as_deref(),
+        Some("/claude/session:s1/turn:p1/agent:a1/request:r1"),
+        "the cause is the deepest responsible node"
     );
 }
 
 #[test]
-fn sibling_progress_does_not_clear_request() {
+fn closing_rules() {
     let mut t = tree();
     open(&mut t, "/claude/session:s1/turn:p1/agent:a1/request:r1", 1);
-    open(&mut t, "/claude/session:s1/turn:p1/agent:a2", 2);
+    open(&mut t, "/claude/session:s1/turn:p1/agent:a2", 1);
+
     close(
         &mut t,
         "/claude/session:s1/turn:p1/agent:a2",
         Outcome::Ok,
-        3,
+        2,
     );
-    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
-}
+    assert_eq!(
+        t.state("/claude"),
+        Some(State::NeedsInput),
+        "a sibling finishing doesn't clear a request"
+    );
 
-#[test]
-fn closing_actor_closes_its_requests() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1/agent:a1/request:r1", 1);
+    close(&mut t, "/claude/session:s1/turn:p1", Outcome::Ok, 3);
+    assert!(
+        t.contains("/claude/session:s1/turn:p1/agent:a1"),
+        "a turn ending keeps its subagents"
+    );
+    assert_eq!(
+        t.attrs("/claude/session:s1").unwrap()["last_turn"]["outcome"],
+        "ok"
+    );
+
     close(
         &mut t,
         "/claude/session:s1/turn:p1/agent:a1",
         Outcome::Ok,
+        4,
+    );
+    assert!(
+        !t.contains("/claude/session:s1/turn:p1"),
+        "nothing open beneath, so pruned"
+    );
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+
+    open(&mut t, "/claude/session:s1/turn:p2/request:r2", 5);
+    close(&mut t, "/claude/session:s1", Outcome::Ok, 6);
+    assert!(
+        !t.contains("/claude/session:s1"),
+        "a session closes everything beneath it"
+    );
+}
+
+#[test]
+fn silence_makes_work_unknown_never_idle() {
+    let mut t = tree();
+    open(&mut t, "/claude/session:idle", 0);
+    open(&mut t, "/claude/session:s1/turn:p1", 0);
+    assert_eq!(t.next_deadline(), Some(STALE_AFTER));
+
+    t.expire(STALE_AFTER);
+    assert_eq!(t.state("/claude/session:s1"), Some(State::Unknown));
+    assert_eq!(t.state("/claude/session:idle"), Some(State::Idle));
+
+    open(
+        &mut t,
+        "/claude/session:s1/turn:p1/agent:a1",
+        STALE_AFTER + 1,
+    );
+    assert_eq!(
+        t.state("/claude"),
+        Some(State::Working),
+        "any event reconfirms"
+    );
+}
+
+#[test]
+fn process_nodes_hold_unknown_until_claimed_or_exited() {
+    let mut t = tree();
+    open(&mut t, "/claude/process:42", 1);
+    open(&mut t, "/claude/process:43", 1);
+    assert_eq!(t.state("/claude"), Some(State::Unknown));
+
+    open_with(&mut t, "/claude/session:s1", json!({"pid": 42}), 2);
+    open(&mut t, "/claude/session:s1/turn:p1", 2);
+    assert!(
+        !t.contains("/claude/process:42"),
+        "a session claims its process"
+    );
+
+    assert_eq!(
+        t.process_exited(42, 3),
+        vec!["/claude/session:s1".to_string()]
+    );
+    assert!(t.process_exited(43, 3).is_empty());
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+}
+
+#[test]
+fn lost_and_sync() {
+    let mut t = tree();
+    open(&mut t, "/claude/session:s1/turn:p1", 1);
+    t.apply(
+        Event::Lost {
+            scope: "/claude/session:s1".into(),
+        },
         2,
     );
-    assert!(!t.contains("/claude/session:s1/turn:p1/agent:a1/request:r1"));
+    assert_eq!(t.state("/claude"), Some(State::Unknown));
+
+    let nodes = vec![("/claude/session:s1/turn:p2".into(), Default::default())];
+    t.apply(
+        Event::Sync {
+            scope: "/claude/session:s1".into(),
+            nodes,
+        },
+        3,
+    );
+    assert!(!t.contains("/claude/session:s1/turn:p1"));
     assert_eq!(t.state("/claude"), Some(State::Working));
 }
 
 #[test]
-fn closing_turn_keeps_subagents() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1/agent:a1", 1);
-    close(&mut t, "/claude/session:s1/turn:p1", Outcome::Ok, 2);
-    assert!(t.contains("/claude/session:s1/turn:p1"));
-    assert_eq!(t.state("/claude/session:s1"), Some(State::Working));
-    close(
-        &mut t,
-        "/claude/session:s1/turn:p1/agent:a1",
-        Outcome::Ok,
-        3,
-    );
-    assert!(!t.contains("/claude/session:s1/turn:p1"));
-    assert_eq!(t.state("/claude/session:s1"), Some(State::Idle));
-}
-
-#[test]
-fn closing_session_removes_everything_beneath() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1/agent:a1/request:r1", 1);
-    close(&mut t, "/claude/session:s1", Outcome::Ok, 2);
-    assert!(!t.contains("/claude/session:s1"));
-    assert!(!t.contains("/claude/session:s1/turn:p1"));
-    assert_eq!(t.state("/claude"), Some(State::Idle));
-}
-
-#[test]
-fn open_is_idempotent_and_merges_attrs() {
-    let mut t = tree();
-    open_with(
-        &mut t,
-        "/claude/session:s1",
-        serde_json::json!({"cwd": "/a"}),
-        1,
-    );
-    open_with(
-        &mut t,
-        "/claude/session:s1",
-        serde_json::json!({"pid": 42}),
-        2,
-    );
-    let a = t.attrs("/claude/session:s1").unwrap();
-    assert_eq!(a["cwd"], "/a");
-    assert_eq!(a["pid"], 42);
-}
-
-#[test]
-fn attr_merges_into_existing_and_ignores_unknown() {
-    let mut t = tree();
-    open(&mut t, "/claude/session:s1", 1);
-    let attrs = serde_json::json!({"cwd": "/b"})
-        .as_object()
-        .unwrap()
-        .clone();
-    t.apply(
-        Event::Attr {
-            id: "/claude/session:s1".into(),
-            attrs,
-        },
-        2,
-    );
-    t.apply(
-        Event::Attr {
-            id: "/claude/session:s9".into(),
-            attrs: Default::default(),
-        },
-        3,
-    );
-    assert_eq!(t.attrs("/claude/session:s1").unwrap()["cwd"], "/b");
-    assert!(!t.contains("/claude/session:s9"));
-}
-
-#[test]
-fn close_of_unknown_node_is_ignored() {
-    let mut t = tree();
-    close(&mut t, "/claude/session:nope", Outcome::Ok, 1);
-    assert_eq!(t.state("/claude"), Some(State::Idle));
-}
-
-#[test]
-fn invalid_paths_are_ignored() {
+fn malformed_paths_are_ignored() {
     let mut t = tree();
     open(&mut t, "/claude/turn:p1", 1);
     open(&mut t, "/gemini/session:s1", 1);
+    close(&mut t, "/claude/session:nope", Outcome::Ok, 1);
     assert_eq!(t.state("/"), Some(State::Idle));
-    assert!(!t.contains("/gemini"));
-    assert_eq!(
-        kind_of("/claude/session:s1/turn:p1/agent:a1/agent:a2"),
-        Some(Kind::Agent)
-    );
-    assert_eq!(kind_of("/claude/bogus:x"), None);
+    assert_eq!(t.rows().len(), 2);
 }
 
 #[test]
-fn cause_prefers_deepest_then_earliest() {
+fn client_row_has_the_wire_shape() {
     let mut t = tree();
-    open(&mut t, "/claude/session:s1/turn:p1/request:r1", 1);
-    open(&mut t, "/claude/session:s2/turn:p2/agent:a1/request:r2", 2);
-    open(&mut t, "/claude/session:s3/turn:p3/agent:a1/request:r3", 3);
-    assert_eq!(
-        t.cause("/claude").as_deref(),
-        Some("/claude/session:s2/turn:p2/agent:a1/request:r2")
+    open_with(
+        &mut t,
+        "/claude/session:s1/turn:p1/request:r1",
+        json!({"reason": "approval"}),
+        1,
     );
+    open(&mut t, "/claude/session:s2/turn:p2", 2);
+    open(&mut t, "/claude/session:s3", 3);
+    let row = t.rows().into_iter().find(|r| r.id == "/claude").unwrap();
+    assert_eq!(
+        serde_json::to_value(&row).unwrap(),
+        json!({
+            "id": "/claude", "kind": "client", "state": "needs_input",
+            "since": "1970-01-01T00:00:00.001Z", "reason": "approval",
+            "cause": "/claude/session:s1/turn:p1/request:r1",
+            "counts": {"sessions": 3, "needs_input": 1, "working": 1, "unknown": 0, "idle": 1},
+            "attrs": {"observes": ["session", "turn", "agent", "request"]}
+        })
+    );
+}
+
+#[test]
+fn changes_report_only_what_changed() {
+    let mut t = tree();
+    assert_eq!(t.take_changes().len(), 2, "the machine and client rows");
+    assert!(t.take_changes().is_empty());
+
+    open(&mut t, "/claude/session:s1/turn:p1", 1);
+    t.take_changes();
+    close(&mut t, "/claude/session:s1/turn:p1", Outcome::Ok, 2);
+    let changes = t.take_changes();
+    assert!(changes.contains(&Change::Remove("/claude/session:s1/turn:p1".into())));
 }

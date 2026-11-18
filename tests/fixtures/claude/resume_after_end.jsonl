@@ -1,6 +1,0 @@
-{"client":"claude","session_id":"s1","event":"SessionStart","source":"startup"}
-{"client":"claude","session_id":"s1","event":"SessionEnd"}
-{"client":"claude","session_id":"s1","event":"SessionStart","source":"resume"}
-{"client":"claude","session_id":"s1","turn_id":"p2","event":"UserPromptSubmit"}
-{"client":"claude","session_id":"s1","turn_id":"p2","event":"PreToolUse","tool_name":"Bash","tool_use_id":"tu1","digest":"d1"}
-{"client":"claude","session_id":"s1","turn_id":"p2","event":"PermissionRequest","tool_name":"Bash","digest":"d1"}

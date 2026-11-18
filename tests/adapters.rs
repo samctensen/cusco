@@ -1,0 +1,298 @@
+//! Hook sequences replayed through the adapters. Each step is an event name
+//! and the record's other fields; every record defaults to session `s1` and
+//! turn `p1`, and steps run one second apart unless a test sets the time.
+
+use cusco::adapter::Adapter;
+use cusco::adapter::claude::ClaudeAdapter;
+use cusco::adapter::codex::CodexAdapter;
+use cusco::record::HookRecord;
+use cusco::tree::{Millis, STALE_AFTER, State, Tree};
+use serde_json::{Value, json};
+
+type Step = (&'static str, Value);
+
+fn feed(tree: &mut Tree, adapter: &mut dyn Adapter, (event, fields): &Step, at: Millis) {
+    let mut record = json!({
+        "client": adapter.client().name, "session_id": "s1", "turn_id": "p1", "event": event,
+    });
+    record
+        .as_object_mut()
+        .unwrap()
+        .extend(fields.as_object().unwrap().clone());
+    let record: HookRecord = serde_json::from_value(record).unwrap();
+    for event in adapter.handle(&record, at) {
+        tree.apply(event, at);
+    }
+}
+
+fn replay(adapter: &mut dyn Adapter, steps: &[Step]) -> Tree {
+    let mut tree = Tree::new(&[adapter.client()], STALE_AFTER, 0);
+    for (n, step) in steps.iter().enumerate() {
+        feed(&mut tree, adapter, step, n as Millis * 1000);
+    }
+    tree
+}
+
+fn claude(steps: &[Step]) -> Tree {
+    replay(&mut ClaudeAdapter::new(), steps)
+}
+
+fn codex(steps: &[Step]) -> Tree {
+    replay(&mut CodexAdapter::new(), steps)
+}
+
+fn last_outcome(tree: &Tree, session: &str) -> Value {
+    tree.attrs(session).unwrap()["last_turn"]["outcome"].clone()
+}
+
+/// The design's first demonstration: the main turn ends while a subagent
+/// waits for approval; approving and finishing the subagent clears it.
+#[test]
+fn first_demonstration() {
+    let waiting = [
+        ("SessionStart", json!({"source": "startup"})),
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "a1"})),
+        (
+            "PreToolUse",
+            json!({"agent_id": "a1", "tool_name": "Bash", "tool_use_id": "tu1", "digest": "d1"}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"agent_id": "a1", "tool_name": "Bash", "digest": "d1"}),
+        ),
+        ("Stop", json!({"background_tasks": [{"id": "a1"}]})),
+    ];
+    let t = claude(&waiting);
+    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
+    assert_eq!(
+        t.cause("/claude").as_deref(),
+        Some("/claude/session:s1/turn:p1/agent:a1/request:tu1")
+    );
+
+    let finished = [
+        (
+            "PostToolUse",
+            json!({"agent_id": "a1", "tool_use_id": "tu1"}),
+        ),
+        ("SubagentStop", json!({"agent_id": "a1"})),
+    ];
+    let t = claude(&[waiting.as_slice(), &finished].concat());
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+}
+
+/// Claude has no interrupt hook: the next prompt or the idle notification
+/// closes an interrupted turn.
+#[test]
+fn interrupted_turn_is_cancelled() {
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("UserPromptSubmit", json!({"turn_id": "p2"})),
+    ]);
+    assert_eq!(last_outcome(&t, "/claude/session:s1"), "cancelled");
+    assert!(t.contains("/claude/session:s1/turn:p2"));
+
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("Notification", json!({"notification_type": "idle_prompt"})),
+    ]);
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+}
+
+/// A parallel sibling's hook can arrive just after a permission request; a
+/// tool call after the user had time to answer means it was answered.
+#[test]
+fn approval_survives_a_racing_sibling() {
+    let mut adapter = ClaudeAdapter::new();
+    let mut t = Tree::new(&[adapter.client()], STALE_AFTER, 0);
+    let tool =
+        |id: &str, digest: &str| json!({"tool_name": "Read", "tool_use_id": id, "digest": digest});
+    let steps: [(Millis, Step); 4] = [
+        (0, ("PreToolUse", tool("tu1", "d1"))),
+        (
+            5,
+            (
+                "PermissionRequest",
+                json!({"tool_name": "Read", "digest": "d1"}),
+            ),
+        ),
+        (8, ("PreToolUse", tool("tu2", "d2"))),
+        (2_000, ("PreToolUse", tool("tu3", "d3"))),
+    ];
+    for (at, step) in &steps[..3] {
+        feed(&mut t, &mut adapter, step, *at);
+    }
+    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
+    feed(&mut t, &mut adapter, &steps[3].1, steps[3].0);
+    assert_eq!(t.state("/claude"), Some(State::Working));
+}
+
+#[test]
+fn questions_and_mcp_input_are_requests() {
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        (
+            "PreToolUse",
+            json!({"tool_name": "AskUserQuestion", "tool_use_id": "tu5"}),
+        ),
+    ]);
+    let row = t.rows().into_iter().find(|r| r.id == "/claude").unwrap();
+    assert_eq!(row.reason.as_deref(), Some("question"));
+
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("Elicitation", json!({"elicitation_id": "e1"})),
+    ]);
+    let row = t.rows().into_iter().find(|r| r.id == "/claude").unwrap();
+    assert_eq!(row.reason.as_deref(), Some("mcp_input"));
+}
+
+/// Hooks run concurrently, so records can arrive after what they preceded.
+#[test]
+fn late_records_never_reopen_anything() {
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("Stop", json!({})),
+        ("SubagentStart", json!({"agent_id": "a9"})),
+        ("SubagentStop", json!({"agent_id": "a1"})),
+        ("SubagentStart", json!({"agent_id": "a1"})),
+    ]);
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("SessionEnd", json!({})),
+        ("PostToolUse", json!({"tool_use_id": "tu1"})),
+    ]);
+    assert!(!t.contains("/claude/session:s1"));
+}
+
+/// `--resume` reuses the session id, and Codex resumes threads it ended.
+#[test]
+fn resumed_session_is_tracked_again() {
+    let steps = |turn: &str| {
+        [
+            ("SessionStart", json!({})),
+            ("SessionEnd", json!({})),
+            ("SessionStart", json!({"source": "resume"})),
+            ("UserPromptSubmit", json!({"turn_id": turn})),
+            (
+                "PermissionRequest",
+                json!({"turn_id": turn, "tool_name": "Bash", "digest": "d1"}),
+            ),
+        ]
+    };
+    assert_eq!(
+        claude(&steps("p2")).state("/claude"),
+        Some(State::NeedsInput)
+    );
+    assert_eq!(codex(&steps("t2")).state("/codex"), Some(State::NeedsInput));
+}
+
+#[test]
+fn new_session_in_the_same_process_ends_the_old_one() {
+    let t = claude(&[
+        ("SessionStart", json!({"pid": 42})),
+        (
+            "SessionStart",
+            json!({"session_id": "s2", "source": "clear", "pid": 42}),
+        ),
+    ]);
+    assert!(!t.contains("/claude/session:s1"));
+    assert!(t.contains("/claude/session:s2"));
+}
+
+/// After a restart Cusco hasn't seen the turn start, so activity opens it.
+#[test]
+fn activity_after_a_restart_opens_what_was_missed() {
+    let t = claude(&[("PostToolUse", json!({"tool_use_id": "tu1"}))]);
+    assert_eq!(t.state("/claude"), Some(State::Working));
+
+    let background = [
+        ("Stop", json!({})),
+        (
+            "PermissionRequest",
+            json!({"agent_id": "a7", "tool_name": "Bash", "digest": "d7"}),
+        ),
+    ];
+    assert_eq!(
+        claude(&background).state("/claude"),
+        Some(State::NeedsInput)
+    );
+    let done = [
+        background.as_slice(),
+        &[("SubagentStop", json!({"agent_id": "a7"}))],
+    ]
+    .concat();
+    let t = claude(&done);
+    assert_eq!(t.state("/claude"), Some(State::Idle));
+    assert!(
+        !t.contains("/claude/session:s1/turn:p1"),
+        "the ended turn wasn't revived"
+    );
+
+    assert_eq!(
+        codex(&[("PreToolUse", json!({}))]).state("/codex"),
+        Some(State::Working)
+    );
+}
+
+/// `Stop` lists the background tasks still running. Unlisted agents close,
+/// except one waiting on you; no list means no reconciliation.
+#[test]
+fn stop_reconciles_background_agents() {
+    let start = [
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "a1"})),
+        ("SubagentStart", json!({"agent_id": "a2"})),
+        ("SubagentStart", json!({"agent_id": "a3"})),
+        (
+            "PermissionRequest",
+            json!({"agent_id": "a3", "tool_name": "Bash", "digest": "d3"}),
+        ),
+    ];
+    let listed = [("Stop", json!({"background_tasks": [{"id": "a1"}]}))];
+    let t = claude(&[start.as_slice(), &listed].concat());
+    let agent = |id: &str| format!("/claude/session:s1/turn:p1/agent:{id}");
+    assert!(t.contains(&agent("a1")));
+    assert!(!t.contains(&agent("a2")));
+    assert!(t.contains(&agent("a3")), "an agent waiting on you stays");
+
+    let t = claude(&[start.as_slice(), &[("Stop", json!({}))]].concat());
+    assert!(t.contains(&agent("a2")));
+}
+
+#[test]
+fn codex_approvals_and_turns() {
+    let asking = [
+        ("UserPromptSubmit", json!({})),
+        ("PreToolUse", json!({"digest": "d1"})),
+        ("PermissionRequest", json!({"digest": "d1"})),
+        ("PostToolUse", json!({"digest": "d9"})),
+    ];
+    let t = codex(&asking);
+    assert_eq!(t.state("/codex"), Some(State::NeedsInput));
+    assert_eq!(
+        t.cause("/codex").as_deref(),
+        Some("/codex/session:s1/turn:p1/request:d1"),
+        "Codex approvals attach to the turn"
+    );
+    let answered = [
+        asking.as_slice(),
+        &[("PreToolUse", json!({"digest": "d2"}))],
+    ]
+    .concat();
+    assert_eq!(codex(&answered).state("/codex"), Some(State::Working));
+
+    let t = codex(&[
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "a1"})),
+        ("Interrupt", json!({})),
+    ]);
+    assert_eq!(last_outcome(&t, "/codex/session:s1"), "cancelled");
+    assert_eq!(
+        t.state("/codex"),
+        Some(State::Working),
+        "the subagent outlives the turn"
+    );
+}

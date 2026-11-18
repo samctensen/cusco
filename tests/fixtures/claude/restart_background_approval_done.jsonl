@@ -1,3 +1,0 @@
-{"client":"claude","session_id":"s1","turn_id":"p1","event":"Stop"}
-{"client":"claude","session_id":"s1","turn_id":"p1","event":"PermissionRequest","agent_id":"a7","tool_name":"Bash","digest":"d7"}
-{"client":"claude","session_id":"s1","turn_id":"p1","event":"SubagentStop","agent_id":"a7"}
