@@ -143,6 +143,22 @@ pub fn wait_for_snapshot(
     }
 }
 
+/// Starts a stand-in agent process: a copy of `/bin/sleep` named `name`.
+/// macOS kills a copied system binary unless it is re-signed, so the copy
+/// gets an ad hoc signature.
+pub fn fake_agent(dir: &Path, name: &str) -> std::process::Child {
+    let path = dir.join(name);
+    std::fs::copy("/bin/sleep", &path).unwrap();
+    let signed = Command::new("codesign")
+        .args(["-f", "-s", "-"])
+        .arg(&path)
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(signed.success(), "codesign failed for {}", path.display());
+    Command::new(&path).arg("30").spawn().unwrap()
+}
+
 /// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
 pub fn run_cusco(args: &[&str], dir: &Path, stdin: &str) -> Output {
     run_cusco_env(args, dir, &[], stdin)

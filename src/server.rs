@@ -9,9 +9,11 @@ use crate::adapter::Adapter;
 use crate::adapter::claude::ClaudeAdapter;
 use crate::adapter::codex::CodexAdapter;
 use crate::api::{ApiRequest, Op, Subscribers, error_line, parse_request, snapshot_line};
+use crate::process;
 use crate::record::HookRecord;
 use crate::row::{Change, Row};
-use crate::tree::{Millis, Tree};
+use crate::tree::{Attrs, Event, Millis, Tree};
+use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
@@ -48,6 +50,7 @@ enum Input {
         request: ApiRequest,
         respond: Sender<Receiver<String>>,
     },
+    ProcessExited(u32),
     Shutdown,
 }
 
@@ -80,7 +83,7 @@ pub fn serve(config: Config) -> io::Result<Server> {
     let stop = Arc::new(AtomicBool::new(false));
     let (inputs, received) = mpsc::channel();
     let threads = vec![
-        spawn_core(config, received),
+        spawn_core(config, received, inputs.clone()),
         spawn_ingest(ingest, inputs.clone(), stop.clone()),
         spawn_accept(listener, inputs.clone(), stop.clone()),
     ];
@@ -134,23 +137,28 @@ struct Core {
     adapters: Vec<Box<dyn Adapter>>,
     subscribers: Subscribers,
     rev: u64,
+    /// Where exit watchers report; a clone of the core's own input channel.
+    exits: Sender<Input>,
+    watched: HashSet<u32>,
 }
 
-fn spawn_core(config: Config, inputs: Receiver<Input>) -> JoinHandle<()> {
+fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> JoinHandle<()> {
     thread::spawn(move || {
         let adapters: Vec<Box<dyn Adapter>> = vec![
             Box::new(ClaudeAdapter::new()),
             Box::new(CodexAdapter::new()),
         ];
         let clients: Vec<_> = adapters.iter().map(|adapter| adapter.client()).collect();
-        let mut tree = Tree::new(&clients, config.stale_after, now());
-        tree.take_changes();
         let mut core = Core {
-            tree,
+            tree: Tree::new(&clients, config.stale_after, now()),
             adapters,
             subscribers: Subscribers::new(config.subscriber_queue),
             rev: 0,
+            exits,
+            watched: HashSet::new(),
         };
+        core.scan_processes(&config.executables);
+        core.tree.take_changes();
         core.run(&inputs);
     })
 }
@@ -170,6 +178,7 @@ impl Core {
                 Ok(Input::Request { request, respond }) => {
                     let _ = respond.send(self.answer(request));
                 }
+                Ok(Input::ProcessExited(pid)) => self.process_exited(pid),
                 Ok(Input::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {}
             }
@@ -189,6 +198,50 @@ impl Core {
         };
         for event in adapter.handle(record, at) {
             self.tree.apply(event, at);
+        }
+        if let Some(pid) = record.pid {
+            self.watch(pid);
+        }
+    }
+
+    /// Adds a process node for each running agent process, so its client
+    /// shows `unknown` until one of its sessions reports or it exits.
+    fn scan_processes(&mut self, executables: &[(&'static str, String)]) {
+        let at = now();
+        for (client, pid) in process::list_processes(executables) {
+            self.tree.apply(
+                Event::Open {
+                    id: format!("/{client}/process:{pid}"),
+                    attrs: Attrs::new(),
+                },
+                at,
+            );
+            self.watch(pid);
+        }
+    }
+
+    fn watch(&mut self, pid: u32) {
+        if self.watched.insert(pid) {
+            let exits = self.exits.clone();
+            process::watch_exit(pid, move || {
+                let _ = exits.send(Input::ProcessExited(pid));
+            });
+        }
+    }
+
+    fn process_exited(&mut self, pid: u32) {
+        self.watched.remove(&pid);
+        for session in self.tree.process_exited(pid, now()) {
+            let Some((client, session_id)) = session[1..].split_once("/session:") else {
+                continue;
+            };
+            if let Some(adapter) = self
+                .adapters
+                .iter_mut()
+                .find(|adapter| adapter.client().name == client)
+            {
+                adapter.forget_session(session_id);
+            }
         }
     }
 
