@@ -4,8 +4,8 @@
 //! can host many sessions, so this adapter tracks less than the Claude one.
 
 use super::{
-    Adapter, EndedSessions, Turns, agent_path, close, open, open_session, request_path,
-    session_path, turn_path, with_reason,
+    Adapter, EndedSessions, SIBLING_WINDOW, Turns, agent_path, close, open, open_session,
+    request_path, session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
 use crate::tree::{Attrs, Client, Event, Millis, Outcome};
@@ -33,7 +33,7 @@ impl Adapter for CodexAdapter {
         CLIENT
     }
 
-    fn handle(&mut self, record: &HookRecord, _at: Millis) -> Vec<Event> {
+    fn handle(&mut self, record: &HookRecord, at: Millis) -> Vec<Event> {
         if !self.ended.admits(record) {
             return Vec::new();
         }
@@ -47,7 +47,7 @@ impl Adapter for CodexAdapter {
         self.sessions
             .entry(record.session_id.clone())
             .or_default()
-            .handle(&session, record, &mut events);
+            .handle(&session, record, at, &mut events);
         events
     }
 
@@ -62,12 +62,12 @@ struct Session {
     turns: Turns,
     /// Each known subagent and the turn that started it.
     agents: HashMap<String, String>,
-    /// Open approval request ids per turn.
-    approvals: HashMap<String, Vec<String>>,
+    /// Open approvals per turn: request id and when it opened.
+    approvals: HashMap<String, Vec<(String, Millis)>>,
 }
 
 impl Session {
-    fn handle(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
+    fn handle(&mut self, session: &str, record: &HookRecord, at: Millis, events: &mut Vec<Event>) {
         match record.event.as_str() {
             "UserPromptSubmit" => {
                 if let Some((turn, previous)) = self.turns.begin(record) {
@@ -89,15 +89,22 @@ impl Session {
                 self.enter_turn(session, &turn, events);
                 let path = turn_path(session, &turn);
                 events.push(open(request_path(&path, &id), with_reason("approval")));
-                self.approvals.entry(turn).or_default().push(id);
+                self.approvals.entry(turn).or_default().push((id, at));
             }
-            // A new tool call in the turn means its approval was answered.
+            // A new tool call in the turn means its approval was answered,
+            // unless it falls within the sibling window of the approval.
             "PreToolUse" => {
-                if let Some(turn) = self.turns.of(record) {
+                if let Some(turn) = self.turns.of(record)
+                    && let Some(open_ids) = self.approvals.get_mut(&turn)
+                {
                     let path = turn_path(session, &turn);
-                    for id in self.approvals.remove(&turn).unwrap_or_default() {
-                        events.push(close(request_path(&path, &id), Outcome::Ok));
-                    }
+                    open_ids.retain(|(id, opened_at)| {
+                        let answered = at.saturating_sub(*opened_at) >= SIBLING_WINDOW;
+                        if answered {
+                            events.push(close(request_path(&path, id), Outcome::Ok));
+                        }
+                        !answered
+                    });
                 }
                 if let Some(turn) = self.open_turn_of(record) {
                     self.enter_turn(session, &turn, events);
@@ -107,7 +114,7 @@ impl Session {
                 if let (Some(turn), Some(digest)) = (self.turns.of(record), &record.digest) {
                     let path = turn_path(session, &turn);
                     if let Some(open_ids) = self.approvals.get_mut(&turn)
-                        && let Some(index) = open_ids.iter().position(|id| id == digest)
+                        && let Some(index) = open_ids.iter().position(|(id, _)| id == digest)
                     {
                         open_ids.remove(index);
                         events.push(close(request_path(&path, digest), Outcome::Ok));

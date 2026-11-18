@@ -88,3 +88,33 @@ fn activity_opens_a_turn_seen_for_the_first_time() {
         Some(State::Working)
     );
 }
+
+#[test]
+fn sibling_tool_call_racing_an_approval_does_not_answer_it() {
+    use cusco::adapter::Adapter;
+    let mut adapter = CodexAdapter::new();
+    let mut t = Tree::new(&[adapter.client()], cusco::tree::STALE_AFTER, 0);
+    let turn = r#""client":"codex","session_id":"s1","turn_id":"t1""#;
+    let lines = [
+        (0, format!(r#"{{{turn},"event":"UserPromptSubmit"}}"#)),
+        (
+            10,
+            format!(r#"{{{turn},"event":"PreToolUse","tool_name":"shell","digest":"d1"}}"#),
+        ),
+        (
+            12,
+            format!(r#"{{{turn},"event":"PermissionRequest","tool_name":"shell","digest":"d1"}}"#),
+        ),
+        (
+            15,
+            format!(r#"{{{turn},"event":"PreToolUse","tool_name":"shell","digest":"d2"}}"#),
+        ),
+    ];
+    for (at, line) in &lines {
+        let record = serde_json::from_str(line).unwrap();
+        for event in adapter.handle(&record, *at) {
+            t.apply(event, *at);
+        }
+    }
+    assert_eq!(t.state("/codex"), Some(State::NeedsInput));
+}

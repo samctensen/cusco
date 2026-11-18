@@ -1,8 +1,8 @@
 //! The Claude Code adapter. See the design's "Claude Code" adapter section.
 
 use super::{
-    Adapter, EndedSessions, Turns, agent_path, close, open, open_session, request_path,
-    session_path, turn_path, with_reason,
+    Adapter, EndedSessions, SIBLING_WINDOW, Turns, agent_path, close, open, open_session,
+    request_path, session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
 use crate::tree::{Attrs, Client, Event, Millis, Outcome};
@@ -42,7 +42,7 @@ impl Adapter for ClaudeAdapter {
         CLIENT
     }
 
-    fn handle(&mut self, record: &HookRecord, _at: Millis) -> Vec<Event> {
+    fn handle(&mut self, record: &HookRecord, at: Millis) -> Vec<Event> {
         if !self.ended.admits(record) {
             return Vec::new();
         }
@@ -67,7 +67,7 @@ impl Adapter for ClaudeAdapter {
         self.sessions
             .entry(record.session_id.clone())
             .or_default()
-            .handle(&session, record, &mut events);
+            .handle(&session, record, at, &mut events);
         events
     }
 
@@ -105,6 +105,7 @@ struct Request {
     actor: String,
     path: String,
     kind: RequestKind,
+    opened_at: Millis,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -136,7 +137,7 @@ struct Actor {
 }
 
 impl Session {
-    fn handle(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
+    fn handle(&mut self, session: &str, record: &HookRecord, at: Millis, events: &mut Vec<Event>) {
         match record.event.as_str() {
             "UserPromptSubmit" => self.start_turn(session, record, events),
             "Stop" => {
@@ -159,11 +160,11 @@ impl Session {
                     self.close_agent(session, agent, Outcome::Ok, events);
                 }
             }
-            "PreToolUse" => self.pre_tool_use(session, record, events),
+            "PreToolUse" => self.pre_tool_use(session, record, at, events),
             "PermissionRequest" => {
                 if let Some(actor) = self.actor(session, record, Purpose::Activity) {
                     let id = self.approval_id(&actor, record);
-                    self.open_request(session, actor, id, RequestKind::Approval, events);
+                    self.open_request(session, actor, id, RequestKind::Approval, at, events);
                 }
             }
             "PostToolUse" | "PostToolUseFailure" => {
@@ -178,7 +179,7 @@ impl Session {
                     self.actor(session, record, Purpose::Activity),
                     record.elicitation_id.clone(),
                 ) {
-                    self.open_request(session, actor, id, RequestKind::Input, events);
+                    self.open_request(session, actor, id, RequestKind::Input, at, events);
                 }
             }
             "ElicitationResult" => {
@@ -316,17 +317,26 @@ impl Session {
         }
     }
 
-    fn pre_tool_use(&mut self, session: &str, record: &HookRecord, events: &mut Vec<Event>) {
+    fn pre_tool_use(
+        &mut self,
+        session: &str,
+        record: &HookRecord,
+        at: Millis,
+        events: &mut Vec<Event>,
+    ) {
         let Some(actor) = self.actor(session, record, Purpose::Activity) else {
             return;
         };
-        // A new tool call means the actor has moved on, so any approval it
-        // was waiting on has been answered. No hook reports a manual denial.
+        // A new tool call means the actor has moved on, so an approval it was
+        // waiting on has been answered: no hook reports a manual denial. A
+        // call within the sibling window is a parallel call, not an answer.
         let answered: Vec<String> = self
             .requests
             .iter()
             .filter(|(_, request)| {
-                request.actor == actor.key && request.kind == RequestKind::Approval
+                request.actor == actor.key
+                    && request.kind == RequestKind::Approval
+                    && at.saturating_sub(request.opened_at) >= SIBLING_WINDOW
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -343,7 +353,7 @@ impl Session {
         match (&record.tool_name, &record.tool_use_id) {
             (Some(tool), Some(tool_use_id)) if tool == "AskUserQuestion" => {
                 let id = tool_use_id.clone();
-                self.open_request(session, actor, id, RequestKind::Question, events);
+                self.open_request(session, actor, id, RequestKind::Question, at, events);
             }
             _ => self.enter(session, &actor, events),
         }
@@ -367,6 +377,7 @@ impl Session {
         actor: Actor,
         id: String,
         kind: RequestKind,
+        at: Millis,
         events: &mut Vec<Event>,
     ) {
         if !actor.may_open {
@@ -381,6 +392,7 @@ impl Session {
                 actor: actor.key,
                 path,
                 kind,
+                opened_at: at,
             },
         );
     }

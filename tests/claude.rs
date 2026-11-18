@@ -168,3 +168,44 @@ fn stop_never_reconciles_away_an_agent_waiting_for_input() {
         Some(State::NeedsInput)
     );
 }
+
+/// Feeds one record line to the adapter at a chosen time.
+fn feed(t: &mut Tree, adapter: &mut ClaudeAdapter, line: &str, at: cusco::tree::Millis) {
+    use cusco::adapter::Adapter;
+    let record = serde_json::from_str(line).unwrap();
+    for event in adapter.handle(&record, at) {
+        t.apply(event, at);
+    }
+}
+
+#[test]
+fn sibling_tool_call_racing_an_approval_does_not_answer_it() {
+    use cusco::adapter::Adapter;
+    let mut adapter = ClaudeAdapter::new();
+    let mut t = Tree::new(&[adapter.client()], cusco::tree::STALE_AFTER, 0);
+    let turn = r#""client":"claude","session_id":"s1","turn_id":"p1""#;
+    let tool = |id: &str, digest: &str| {
+        format!(
+            r#"{{{turn},"event":"PreToolUse","tool_name":"Read","tool_use_id":"{id}","digest":"{digest}"}}"#
+        )
+    };
+    feed(
+        &mut t,
+        &mut adapter,
+        &format!(r#"{{{turn},"event":"UserPromptSubmit"}}"#),
+        0,
+    );
+    feed(&mut t, &mut adapter, &tool("tu1", "d1"), 10);
+    feed(
+        &mut t,
+        &mut adapter,
+        &format!(r#"{{{turn},"event":"PermissionRequest","tool_name":"Read","digest":"d1"}}"#),
+        12,
+    );
+    // A parallel sibling's hook raced the approval and arrived just after it.
+    feed(&mut t, &mut adapter, &tool("tu2", "d2"), 15);
+    assert_eq!(t.state("/claude"), Some(State::NeedsInput));
+    // A tool call after the user had time to deny means the agent moved on.
+    feed(&mut t, &mut adapter, &tool("tu3", "d3"), 1_500);
+    assert_eq!(t.state("/claude"), Some(State::Working));
+}

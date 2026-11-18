@@ -17,6 +17,12 @@ pub trait Adapter: Send {
     fn forget_session(&mut self, session_id: &str);
 }
 
+/// Parallel tool calls run their hooks at the same moment, so a sibling's
+/// `PreToolUse` can arrive just after another call's `PermissionRequest`. A
+/// new tool call answers an approval only once the approval has been open
+/// this long, which is less than anyone takes to respond to a prompt.
+pub(crate) const SIBLING_WINDOW: Millis = 1_000;
+
 pub fn session_path(client: &str, session: &str) -> String {
     format!("/{client}/session:{session}")
 }
