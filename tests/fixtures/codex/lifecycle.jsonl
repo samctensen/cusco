@@ -1,0 +1,6 @@
+{"client":"codex","session_id":"s1","event":"SessionStart","source":"startup"}
+{"client":"codex","session_id":"s1","turn_id":"t1","event":"UserPromptSubmit"}
+{"client":"codex","session_id":"s1","turn_id":"t1","event":"SubagentStart","agent_id":"a1"}
+{"client":"codex","session_id":"s1","turn_id":"t1","event":"Stop"}
+{"client":"codex","session_id":"s1","turn_id":"t1","event":"SubagentStop","agent_id":"a1"}
+{"client":"codex","session_id":"s1","event":"SessionEnd"}

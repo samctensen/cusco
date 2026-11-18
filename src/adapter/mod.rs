@@ -3,6 +3,7 @@
 //! belongs to.
 
 pub mod claude;
+pub mod codex;
 
 use crate::record::HookRecord;
 use crate::tree::{Attrs, Client, Event, Millis, Outcome};
