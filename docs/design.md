@@ -413,10 +413,15 @@ subscriber, a process exit, or a staleness deadline. It runs no polling loop.
    prompt or `idle_prompt` notification.
 5. Run two tools in parallel in one Claude turn, one needing approval. The other
    tool finishing does not clear the approval.
-6. Recorded hook sequences replay as tests without a live agent.
+6. Hook sequences replay as tests without a live agent.
 
-**Next:** transcript `sync` for Claude, `cusco doctor`, a launchd agent and
-installer, Grok Build and Muse Code adapters, then measured latency and
+**Distribution:** a Homebrew tap (`brew install samctensen/tap/cusco`) builds
+from the tagged source. `brew services` runs `cusco serve` as a launchd agent,
+and `cusco setup` adds or removes the hooks. `cargo install --git` is the path
+without Homebrew.
+
+**Next:** transcript `sync` for Claude, `cusco doctor`, prebuilt release
+binaries, Grok Build and Muse Code adapters, then measured latency and
 idle-overhead targets.
 
 **Later:** OpenCode, Cursor, Antigravity CLI, tool nodes, a `group_by: cwd` view

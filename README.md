@@ -45,45 +45,50 @@ makes anything `idle`; silence only makes it `unknown`.
 
 See [docs/design.md](docs/design.md) for the full design.
 
-## Build and run
+## Install
 
-Requires Rust (edition 2024).
+Cusco runs on macOS. Install it with Homebrew, start the service, and connect
+your agents:
 
 ```sh
-cargo build --release
-./target/release/cusco serve
+brew install samctensen/tap/cusco
+brew services start cusco
+cusco setup
 ```
 
-`cusco serve` runs in the foreground and listens in
-`~/Library/Application Support/cusco/` (or `$CUSCO_DIR`).
+`brew services` runs Cusco in the background, starts it at login and restarts
+it if it stops. `cusco setup` adds Cusco's hook to Claude Code
+(`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`), whichever you
+have. It keeps your other settings and other tools' hooks, and it's safe to run
+again. Then:
 
-## Connect your agents
+- In Codex, run `/hooks` and trust the new hooks. Codex skips hooks until
+  they're trusted.
+- Start a new agent session, so it picks up the hooks.
 
-Each client's hooks run `cusco hook <client>` once per event. The command
-forwards a short list of identifiers and exits immediately. It never writes to
-stdout, never fails, and never waits for Cusco, so your agents aren't slowed
-down or blocked if Cusco isn't running.
+The hook command forwards a short list of identifiers and exits immediately. It
+never writes output, never fails and never waits for Cusco, so your agents
+aren't slowed or blocked even when Cusco isn't running.
 
-Every hook entry has this shape, with the absolute path to your build:
+### Without Homebrew
 
-```json
-{ "hooks": [{ "type": "command", "command": "/path/to/cusco hook claude", "timeout": 2 }] }
+With a Rust toolchain (1.88 or later):
+
+```sh
+cargo install --git https://github.com/samctensen/cusco
+cusco setup
+cusco serve
 ```
 
-**Claude Code** (`~/.claude/settings.json`, under `"hooks"`): add the entry,
-with `hook claude`, to each of these events, keeping any handlers already
-there: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`,
-`PermissionDenied`, `PostToolUse`, `PostToolUseFailure`, `Elicitation`,
-`ElicitationResult`, `Notification`, `SubagentStart`, `SubagentStop`, `Stop`,
-`StopFailure`, `SessionEnd`.
+`cusco serve` runs in the foreground; keep it running however you like.
 
-**Codex** (`~/.codex/hooks.json`, under `"hooks"`): add the entry, with
-`hook codex`, to each of these events: `SessionStart`, `UserPromptSubmit`,
-`PreToolUse`, `PermissionRequest`, `PostToolUse`, `SubagentStart`,
-`SubagentStop`, `Stop`, `Interrupt`, `SessionEnd`. Then review and trust the
-hooks with `/hooks` in Codex; Codex skips hooks until they're trusted.
+### Uninstall
 
-Start a new agent session after adding hooks.
+```sh
+cusco setup --remove
+brew services stop cusco
+brew uninstall cusco
+```
 
 ## Commands
 
