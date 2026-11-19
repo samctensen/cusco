@@ -147,18 +147,34 @@ fn questions_and_mcp_input_are_requests() {
     assert_eq!(row.reason.as_deref(), Some("mcp_input"));
 }
 
-/// Hooks run concurrently, so records can arrive after what they preceded.
+/// One thread's hooks arrive in order, so activity under a closed node's own
+/// id means it is running again: a blocked Stop, a resumed subagent.
 #[test]
-fn late_records_never_reopen_anything() {
+fn activity_reopens_what_it_belongs_to() {
     let t = claude(&[
         ("UserPromptSubmit", json!({})),
         ("Stop", json!({})),
-        ("SubagentStart", json!({"agent_id": "a9"})),
+        ("PreToolUse", json!({"tool_use_id": "tu1"})),
+    ]);
+    assert_eq!(
+        t.state("/claude"),
+        Some(State::Working),
+        "a blocked Stop continued the turn"
+    );
+
+    let t = claude(&[
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "a1"})),
         ("SubagentStop", json!({"agent_id": "a1"})),
+        ("Stop", json!({})),
         ("SubagentStart", json!({"agent_id": "a1"})),
     ]);
-    assert_eq!(t.state("/claude"), Some(State::Idle));
+    assert!(
+        t.contains("/claude/session:s1/turn:p1/agent:a1"),
+        "a resumed subagent runs again"
+    );
 
+    // An ended session stays ended for everything but a new start or prompt.
     let t = claude(&[
         ("UserPromptSubmit", json!({})),
         ("SessionEnd", json!({})),
@@ -260,6 +276,42 @@ fn stop_reconciles_background_agents() {
 
     let t = claude(&[start.as_slice(), &[("Stop", json!({}))]].concat());
     assert!(t.contains(&agent("a2")));
+}
+
+/// Inside a Codex subagent, `turn_id` is the subagent's own turn. It must not
+/// become a root turn that nothing ever closes.
+#[test]
+fn codex_subagents_stay_under_the_root_turn() {
+    let child = json!({"agent_id": "a1", "turn_id": "child-turn"});
+    let t = codex(&[
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", child.clone()),
+        (
+            "PreToolUse",
+            json!({"agent_id": "a1", "turn_id": "child-turn", "tool_use_id": "tu1", "digest": "d1"}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"agent_id": "a1", "turn_id": "child-turn", "digest": "d1"}),
+        ),
+    ]);
+    assert_eq!(
+        t.cause("/codex").as_deref(),
+        Some("/codex/session:s1/turn:p1/agent:a1/request:tu1"),
+        "the approval belongs to the subagent, under the root turn"
+    );
+    let t = codex(&[
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", child.clone()),
+        (
+            "PreToolUse",
+            json!({"agent_id": "a1", "turn_id": "child-turn"}),
+        ),
+        ("Stop", json!({})),
+        ("SubagentStop", child),
+    ]);
+    assert_eq!(t.state("/codex"), Some(State::Idle));
+    assert!(!t.contains("/codex/session:s1/turn:child-turn"));
 }
 
 #[test]
