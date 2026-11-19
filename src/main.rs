@@ -11,7 +11,7 @@ const USAGE: &str = "usage:
   cusco status [--json] [--requests] [--path <path>] [--depth <n>]
   cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
   cusco visualize
-  cusco hook <claude|codex>
+  cusco hook <claude|codex|grok|muse>
   cusco --version";
 
 fn main() -> ExitCode {
