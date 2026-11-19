@@ -40,8 +40,18 @@ an agent, even when Eywa isn't running.
 ### Update
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/samctensen/eywa/main/scripts/update.sh | sh
+```
+
+[The update script](scripts/update.sh) updates Eywa the way you installed it,
+with Homebrew or with cargo. If that changed anything, it restarts the service
+when `eywa start` is running it, and updates the hooks of each agent you've set
+up. By hand, that's:
+
+```sh
 brew upgrade eywa
 eywa stop && eywa start
+eywa setup claude codex   # the agents you've set up
 ```
 
 ### Without Homebrew
