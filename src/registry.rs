@@ -19,6 +19,8 @@ pub struct SessionState {
     pub session_id: String,
     pub pid: u32,
     pub status: Status,
+    /// When the status last changed, in milliseconds since the epoch.
+    pub status_at: Option<crate::tree::Millis>,
     pub cwd: Option<String>,
     pub entrypoint: Option<String>,
 }
@@ -74,6 +76,7 @@ fn parse(bytes: &[u8]) -> Option<SessionState> {
         session_id,
         pid,
         status,
+        status_at: value.get("statusUpdatedAt").and_then(|at| at.as_u64()),
         cwd: text("cwd"),
         entrypoint: text("entrypoint"),
     })
