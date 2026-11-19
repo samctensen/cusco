@@ -98,11 +98,16 @@ fn check_private(dir: &Path) -> io::Result<()> {
     }
 }
 
-pub fn serve(config: Config) -> io::Result<Server> {
+/// Creates Cusco's directory, readable only by the user.
+pub fn create_dir(dir: &Path) -> io::Result<()> {
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(&config.dir)?;
+        .create(dir)
+}
+
+pub fn serve(config: Config) -> io::Result<Server> {
+    create_dir(&config.dir)?;
     check_private(&config.dir)?;
     let api_path = config.dir.join(API_SOCKET);
     let ingest_path = config.dir.join(INGEST_SOCKET);

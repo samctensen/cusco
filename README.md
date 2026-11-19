@@ -31,13 +31,14 @@ Install with Homebrew, start the service and connect your agents:
 
 ```sh
 brew install samctensen/tap/cusco
-brew services start cusco
+cusco start
+cusco autostart on
 cusco setup
 ```
 
-- `brew services` runs Cusco in the background, starts it at login and restarts
-  it if it crashes. `cusco stop` stops it until `brew services restart cusco`
-  or your next login.
+- `cusco start` runs Cusco in the background and restarts it if it crashes,
+  until `cusco stop` or you log out. `cusco autostart on` also starts it at
+  every login; `cusco autostart off` turns that off again.
 - `cusco setup` adds Cusco's hook to each agent it finds on your machine. It
   keeps your other settings and other tools' hooks, and it's safe to run again.
 
@@ -70,11 +71,13 @@ aren't slowed down or blocked even when Cusco isn't running.
 
 ```sh
 brew upgrade cusco
-brew services restart cusco
+cusco stop && cusco start
 ```
 
-The hooks point at Homebrew's stable `bin/cusco` link, so they keep working
-across upgrades and Codex keeps trusting them.
+The hooks and the launchd job point at Homebrew's stable `bin/cusco` link, so
+they keep working across upgrades and Codex keeps trusting the hooks. If you
+ran Cusco with `brew services` before, `cusco start` and `cusco autostart on`
+take over from it.
 
 ### Without Homebrew
 
@@ -82,18 +85,20 @@ With a Rust toolchain (1.88 or later):
 
 ```sh
 cargo install --git https://github.com/samctensen/cusco
+cusco start
+cusco autostart on
 cusco setup
-cusco serve
 ```
 
-`cusco serve` runs in the foreground; keep it running however you like, and
-stop it with ⌃C or `cusco stop`.
+To run Cusco in the foreground instead, use `cusco serve`, and stop it with ⌃C
+or `cusco stop`.
 
 ### Uninstall
 
 ```sh
 cusco setup --remove
-brew services stop cusco
+cusco autostart off
+cusco stop
 brew uninstall cusco
 ```
 
@@ -104,8 +109,10 @@ brew uninstall cusco
 | `cusco setup` | Adds Cusco's hook to every supported agent on this machine. |
 | `cusco setup claude codex` | Adds it to the named agents only: `claude`, `codex`, `grok`, `muse`. |
 | `cusco setup --remove` | Takes Cusco's hooks out again. Accepts agent names too. |
-| `cusco serve` | Runs the service in the foreground. `brew services` does this for you. |
-| `cusco stop` | Stops the running service and waits until it has. Under `brew services`, it stays stopped until `brew services restart cusco` or your next login. |
+| `cusco start` | Runs the service in the background as a launchd job, restarting it if it crashes, until `cusco stop` or you log out. Its output goes to `cusco.log` in Cusco's directory. |
+| `cusco stop` | Stops the service and waits until it has. With autostart on, it starts again at your next login. |
+| `cusco autostart on` | Starts the service at every login. `off` turns that off, and with neither, it prints `on` or `off`. Neither changes whether it's running now. |
+| `cusco serve` | Runs the service in the foreground. `cusco start` runs this for you. |
 | `cusco status` | Prints one snapshot and exits. |
 | `cusco watch` | Prints a snapshot, then every change as it happens, until you press ⌃C or Cusco stops. |
 | `cusco visualize` | A live, full-screen view of every agent in the terminal. ⌃C quits. |
@@ -221,7 +228,9 @@ cargo fmt --check
 To see exactly what your agents send, set `CUSCO_RECORD=/path/to/file.jsonl`
 in the environment they run in; the hook command appends each record (allowed
 fields only) to that file. To run a second copy of Cusco alongside your own,
-point both it and your agents at another directory with `CUSCO_DIR`.
+point both it and your agents at another directory with `CUSCO_DIR`, and run it
+with `cusco serve`; `start`, `stop` and `autostart` leave your own copy's
+launchd job alone.
 
 ## License
 
