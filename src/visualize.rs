@@ -339,8 +339,11 @@ fn elapsed(row: &Value, now: Millis) -> String {
 struct Line(Vec<(&'static str, String)>);
 
 impl Line {
+    /// Adds text with control characters removed: folder names and ids come
+    /// from hook payloads and must not drive the terminal.
     fn add(mut self, style: &'static str, text: impl Into<String>) -> Self {
-        self.0.push((style, text.into()));
+        let text = text.into().chars().filter(|c| !c.is_control()).collect();
+        self.0.push((style, text));
         self
     }
 
