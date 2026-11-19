@@ -414,6 +414,10 @@ impl Tracker {
         );
     }
 
+    pub(crate) fn close_all_requests(&mut self, events: &mut Vec<Event>) {
+        self.close_requests(|_| true, Outcome::Ok, events);
+    }
+
     pub(crate) fn has_requests(&self) -> bool {
         !self.requests.is_empty()
     }

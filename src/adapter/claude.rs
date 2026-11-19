@@ -102,8 +102,10 @@ impl Adapter for ClaudeAdapter {
         events.push(open(session_path(CLIENT.name, &state.session_id), attrs));
         let tracker = self.sessions.tracker(CLIENT.name, &state.session_id);
         match &state.status {
+            // Busy again after waiting: whatever it waited on was answered.
             Status::Busy => {
                 running_turn(tracker, &mut events);
+                tracker.close_all_requests(&mut events);
             }
             Status::Waiting(reason) => {
                 let actor = running_turn(tracker, &mut events);
