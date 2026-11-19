@@ -323,7 +323,7 @@ fn visualize_draws_the_tree() {
     let counts = json!({"sessions": 2, "needs_input": 1, "working": 0, "unknown": 0, "idle": 1});
     let mut machine = row("/", "machine", "needs_input", json!({}));
     machine.1["counts"] = counts;
-    let rows = [
+    let mut rows = [
         machine,
         row("/claude", "client", "needs_input", json!({})),
         row(
@@ -351,10 +351,17 @@ fn visualize_draws_the_tree() {
             "needs_input",
             json!({"reason": "approval"}),
         ),
+        row(
+            "/claude/session:s5",
+            "session",
+            "idle",
+            json!({"cwd": "/src/lander"}),
+        ),
         row("/codex", "client", "idle", json!({})),
     ]
     .into_iter()
-    .collect();
+    .collect::<cusco::visualize::Rows>();
+    rows.get_mut("/claude/session:s5").unwrap()["since"] = json!("2026-11-18T20:01:00.000Z");
     let now = humantime::parse_rfc3339("2026-11-18T20:02:05Z").unwrap();
     let now = now
         .duration_since(std::time::UNIX_EPOCH)
@@ -379,7 +386,11 @@ fn visualize_draws_the_tree() {
         lines[line("cusco s9")].contains("needs you 2m 05s"),
         "{plain}"
     );
-    assert!(line("cusco s9") < line("approval") && line("approval") < line("agora"));
+    assert!(line("cusco s9") < line("approval") && line("approval") < line("lander"));
+    assert!(
+        line("lander") < line("agora"),
+        "the latest chats come first"
+    );
     assert!(!plain.contains("turn old"), "idle sessions stay collapsed");
     assert!(lines[line("codex")].contains("no sessions"));
     assert!(lines.iter().all(|line| line.chars().count() <= 60));

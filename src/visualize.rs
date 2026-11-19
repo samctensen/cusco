@@ -3,6 +3,7 @@
 
 use crate::tree::Millis;
 use serde_json::Value;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -155,10 +156,14 @@ impl<'a> View<'a> {
             };
             children.entry(parent).or_default().push(id);
         }
-        // Clients keep their order; beneath them, whatever needs you comes first.
+        // Clients keep their order. Beneath them, whatever needs you comes
+        // first, then the latest to change.
         for (parent, list) in &mut children {
             if *parent != "/" {
-                list.sort_by_key(|id| (rank(state(&rows[*id])), *id));
+                list.sort_by_cached_key(|id| {
+                    let row = &rows[*id];
+                    (state(row) != "needs_input", Reverse(since(row)), *id)
+                });
             }
         }
         View {
@@ -282,10 +287,6 @@ fn state(row: &Value) -> &str {
     row["state"].as_str().unwrap_or("unknown")
 }
 
-fn rank(state: &str) -> usize {
-    STATES.iter().position(|known| *known == state).unwrap_or(2)
-}
-
 fn word(state: &str) -> &'static str {
     match state {
         "needs_input" => "needs you",
@@ -317,15 +318,17 @@ fn label(id: &str, row: &Value) -> (String, String) {
     }
 }
 
+/// When the row entered its current state.
+fn since(row: &Value) -> Option<Millis> {
+    let since = humantime::parse_rfc3339(row["since"].as_str()?).ok()?;
+    Some(since.duration_since(UNIX_EPOCH).ok()?.as_millis() as Millis)
+}
+
 fn elapsed(row: &Value, now: Millis) -> String {
-    let since = row["since"]
-        .as_str()
-        .and_then(|since| humantime::parse_rfc3339(since).ok())
-        .and_then(|since| since.duration_since(UNIX_EPOCH).ok());
-    let Some(since) = since else {
+    let Some(since) = since(row) else {
         return String::new();
     };
-    let seconds = now.saturating_sub(since.as_millis() as Millis) / 1000;
+    let seconds = now.saturating_sub(since) / 1000;
     match seconds {
         0..60 => format!("{seconds}s"),
         60..3600 => format!("{}m {:02}s", seconds / 60, seconds % 60),
