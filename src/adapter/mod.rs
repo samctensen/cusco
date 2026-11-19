@@ -69,6 +69,10 @@ pub(crate) fn close(id: String, outcome: Outcome) -> Event {
     Event::Close { id, outcome }
 }
 
+pub(crate) fn retract(id: String) -> Event {
+    Event::Retract { id }
+}
+
 /// Opens (or refreshes) a session with the attributes a record carries.
 pub(crate) fn open_session(path: &str, record: &HookRecord) -> Event {
     let mut attrs = Attrs::new();
@@ -218,23 +222,38 @@ impl Tracker {
         let Some(turn) = turn.map(String::from).or_else(|| self.open_turn.clone()) else {
             return;
         };
-        self.finish_turn(&turn, Some(outcome), events);
+        self.finish_turn(&turn, |id| close(id, outcome), events);
     }
 
     /// Ends the open turn before its outcome is known, and returns its id.
     /// Whoever calls this records the outcome on the session once it is.
     pub(crate) fn end_turn_unsettled(&mut self, events: &mut Vec<Event>) -> Option<String> {
         let turn = self.open_turn.clone()?;
-        self.finish_turn(&turn, None, events);
+        self.finish_turn(&turn, |id| Event::End { id }, events);
         Some(turn)
     }
 
-    fn finish_turn(&mut self, turn: &str, outcome: Option<Outcome>, events: &mut Vec<Event>) {
+    /// Gives the open turn its real id, `turn`, when it was opened under a
+    /// placeholder. It is one turn and it goes on running, so nothing is
+    /// recorded about how any turn ended.
+    pub(crate) fn rename_turn(&mut self, turn: &str, events: &mut Vec<Event>) {
+        let Some(placeholder) = self.open_turn.clone().filter(|open| open != turn) else {
+            return;
+        };
+        events.push(open(turn_path(&self.session, turn), Attrs::new()));
+        self.finish_turn(&placeholder, retract, events);
+        self.open_turn = Some(turn.to_string());
+        self.latest_turn = Some(turn.to_string());
+    }
+
+    fn finish_turn(
+        &mut self,
+        turn: &str,
+        ended: impl FnOnce(String) -> Event,
+        events: &mut Vec<Event>,
+    ) {
         let path = turn_path(&self.session, turn);
-        events.push(match outcome {
-            Some(outcome) => close(path.clone(), outcome),
-            None => Event::End { id: path.clone() },
-        });
+        events.push(ended(path.clone()));
         if self.open_turn.as_deref() == Some(turn) {
             self.open_turn = None;
         }
@@ -264,8 +283,10 @@ impl Tracker {
                 open: true,
             });
         agent.open = true;
+        // Opening the subagent opened its turn with it if the turn was gone.
+        // The turn isn't running, and this is no news of how it ended.
         if self.open_turn.as_deref() != Some(actor.turn.as_str()) {
-            events.push(close(turn_path(&self.session, &actor.turn), Outcome::Ok));
+            events.push(retract(turn_path(&self.session, &actor.turn)));
         }
     }
 
