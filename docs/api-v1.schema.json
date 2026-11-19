@@ -12,8 +12,8 @@
       "properties": {
         "v": { "const": 1 },
         "op": {
-          "description": "get: one snapshot, then the connection closes. subscribe: a snapshot, then every change.",
-          "enum": ["get", "subscribe"]
+          "description": "get: one snapshot, then the connection closes. subscribe: a snapshot, then every change. stop: shut Cusco down.",
+          "enum": ["get", "subscribe", "stop"]
         },
         "view": {
           "description": "tree: the nodes at and below path, down to depth. requests: every open request, as a flat list.",
@@ -40,7 +40,8 @@
         { "$ref": "#/$defs/Snapshot" },
         { "$ref": "#/$defs/Upsert" },
         { "$ref": "#/$defs/Remove" },
-        { "$ref": "#/$defs/Error" }
+        { "$ref": "#/$defs/Error" },
+        { "$ref": "#/$defs/Stopping" }
       ]
     },
     "Snapshot": {
@@ -89,6 +90,15 @@
           "examples": ["bad_request", "unsupported_version"]
         },
         "message": { "description": "A human-readable explanation.", "type": "string" }
+      }
+    },
+    "Stopping": {
+      "description": "The answer to stop. Cusco then closes every connection and exits.",
+      "type": "object",
+      "required": ["v", "type"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "stopping" }
       }
     },
     "Revision": {

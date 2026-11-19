@@ -41,7 +41,7 @@ If the socket doesn't exist or refuses the connection, Cusco isn't running.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `v` | integer | required | Always `1`. |
-| `op` | string | required | `get`: send one snapshot, then close the connection. `subscribe`: send a snapshot, then every change until you disconnect. |
+| `op` | string | required | `get`: send one snapshot, then close the connection. `subscribe`: send a snapshot, then every change until you disconnect. `stop`: shut Cusco down, as `cusco stop` does. |
 | `view` | string | `"tree"` | `tree`: the nodes at and below `path`. `requests`: every open request across all clients, as a flat list. |
 | `path` | string | `"/"` | Tree view only. The node to start at, for example `/claude` or `/claude/session:7f3a`. |
 | `depth` | integer ≥ 0 | `1` | Tree view only. How many levels below `path` to include. `0` sends the node alone. |
@@ -70,6 +70,7 @@ Every message has `v` (always `1`) and `type`.
 {"v":1,"type":"upsert","rev":44,"row":{ … }}
 {"v":1,"type":"remove","rev":45,"id":"/claude/session:7f3a"}
 {"v":1,"type":"error","code":"bad_request","message":"unknown view"}
+{"v":1,"type":"stopping"}
 ```
 
 | `type` | Fields | Meaning |
@@ -78,6 +79,7 @@ Every message has `v` (always `1`) and `type`.
 | `upsert` | `rev`: integer, `row`: Row | A row appeared, or one of its fields changed. Replace the whole row. |
 | `remove` | `rev`: integer, `id`: string | A row disappeared. |
 | `error` | `code`: string, `message`: string | The request was rejected. Cusco closes the connection after it. |
+| `stopping` | none | The answer to `stop`. Cusco then closes every connection and exits. |
 
 `rev` is the revision: an integer that goes up by one with every change Cusco
 publishes, anywhere in the tree. A `subscribe` sends every change newer than
@@ -307,7 +309,7 @@ export type Outcome = "ok" | "error" | "cancelled";
 
 export interface Request {
   v: 1;
-  op: "get" | "subscribe";
+  op: "get" | "subscribe" | "stop";
   view?: "tree" | "requests"; // default "tree"
   path?: string; // default "/"
   depth?: number; // default 1
@@ -317,7 +319,8 @@ export type Message =
   | { v: 1; type: "snapshot"; rev: number; rows: Row[] }
   | { v: 1; type: "upsert"; rev: number; row: Row }
   | { v: 1; type: "remove"; rev: number; id: string }
-  | { v: 1; type: "error"; code: string; message: string };
+  | { v: 1; type: "error"; code: string; message: string }
+  | { v: 1; type: "stopping" };
 
 export interface Row {
   id: string;

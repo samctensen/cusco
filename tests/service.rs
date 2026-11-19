@@ -189,6 +189,27 @@ fn command_line() {
     assert_eq!(snapshot["rows"][0]["state"], "working");
 }
 
+/// `cusco stop` ends the service, which closes its subscribers' connections
+/// and removes its socket.
+#[test]
+fn stop_ends_the_service() {
+    let dir = temp_dir("stop");
+    let service = start(dir.path());
+    let mut watcher = connect(dir.path(), r#"{"v":1,"op":"subscribe"}"#);
+    next_json(&mut watcher);
+    let served = std::thread::spawn(move || service.wait());
+
+    let output = run_cusco(&["stop"], dir.path(), "");
+    assert!(output.status.success(), "{output:?}");
+    served.join().unwrap();
+    let mut rest = String::new();
+    assert_eq!(
+        std::io::BufRead::read_line(&mut watcher, &mut rest).unwrap(),
+        0
+    );
+    assert!(!dir.path().join("api.sock").exists());
+}
+
 /// Setup adds the hook to every event and is safe to repeat; removing it
 /// leaves other settings and other tools' hooks exactly as they were.
 #[test]

@@ -9,6 +9,7 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 pub enum Op {
     Get,
     Subscribe,
+    Stop,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,7 +54,8 @@ pub fn parse_request(line: &str) -> Result<ApiRequest, ApiError> {
     let op = match object.get("op").and_then(Value::as_str) {
         Some("get") => Op::Get,
         Some("subscribe") => Op::Subscribe,
-        _ => return Err(bad_request("op must be get or subscribe")),
+        Some("stop") => Op::Stop,
+        _ => return Err(bad_request("op must be get, subscribe or stop")),
     };
     let selection = match object.get("view").map(Value::as_str) {
         None | Some(Some("tree")) => {
@@ -110,6 +112,10 @@ pub fn change_line(rev: u64, change: &Change) -> String {
         Change::Remove(id) => json!({"v": 1, "type": "remove", "rev": rev, "id": id}),
     }
     .to_string()
+}
+
+pub fn stopping_line() -> String {
+    json!({"v": 1, "type": "stopping"}).to_string()
 }
 
 pub fn error_line(error: &ApiError) -> String {
