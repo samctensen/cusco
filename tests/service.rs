@@ -31,7 +31,7 @@ fn get_returns_one_snapshot() {
         .iter()
         .map(|row| row["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["/", "/claude", "/codex"]);
+    assert_eq!(ids, ["/", "/claude", "/codex", "/grok", "/muse"]);
     let mut rest = String::new();
     assert_eq!(
         std::io::BufRead::read_line(&mut reader, &mut rest).unwrap(),

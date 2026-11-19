@@ -5,6 +5,8 @@
 use cusco::adapter::Adapter;
 use cusco::adapter::claude::ClaudeAdapter;
 use cusco::adapter::codex::CodexAdapter;
+use cusco::adapter::grok::GrokAdapter;
+use cusco::adapter::muse::MuseAdapter;
 use cusco::record::HookRecord;
 use cusco::tree::{Millis, STALE_AFTER, State, Tree};
 use serde_json::{Value, json};
@@ -39,6 +41,14 @@ fn claude(steps: &[Step]) -> Tree {
 
 fn codex(steps: &[Step]) -> Tree {
     replay(&mut CodexAdapter::new(), steps)
+}
+
+fn grok(steps: &[Step]) -> Tree {
+    replay(&mut GrokAdapter::new(), steps)
+}
+
+fn muse(steps: &[Step]) -> Tree {
+    replay(&mut MuseAdapter::new(), steps)
 }
 
 fn last_outcome(tree: &Tree, session: &str) -> Value {
@@ -347,4 +357,86 @@ fn codex_approvals_and_turns() {
         Some(State::Working),
         "the subagent outlives the turn"
     );
+}
+
+/// Grok subagents are child sessions, and approvals come only as a
+/// notification with no ids, so they attach to the turn. Rejecting one
+/// cancels the turn.
+#[test]
+fn grok_child_sessions_and_turn_approvals() {
+    let child = |fields: Value| {
+        let mut record = json!({"session_id": "c1", "turn_id": null});
+        record
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        record
+    };
+    let asking = [
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "c1"})),
+        ("PreToolUse", child(json!({"tool_use_id": "tu1"}))),
+        (
+            "Notification",
+            json!({"turn_id": null, "notification_type": "permission_prompt"}),
+        ),
+    ];
+    let t = grok(&asking);
+    assert_eq!(t.state("/grok"), Some(State::NeedsInput));
+    assert_eq!(
+        t.cause("/grok").as_deref(),
+        Some("/grok/session:s1/turn:p1/request:tu1")
+    );
+    assert!(
+        t.contains("/grok/session:s1/turn:p1/agent:c1"),
+        "the child is an agent, not a session"
+    );
+
+    let rejected = [
+        asking.as_slice(),
+        &[("StopCancelled", json!({"reason": "permission_rejected"}))],
+    ]
+    .concat();
+    let t = grok(&rejected);
+    assert_eq!(last_outcome(&t, "/grok/session:s1"), "cancelled");
+    assert_eq!(
+        t.state("/grok"),
+        Some(State::Working),
+        "the subagent is still running"
+    );
+
+    let ended = [rejected.as_slice(), &[("SessionEnd", child(json!({})))]].concat();
+    assert_eq!(grok(&ended).state("/grok"), Some(State::Idle));
+}
+
+/// Muse names the acting thread in its environment, which the hook record
+/// carries as `agent_id`. `ToolUseStart` is the only sign an approval was granted.
+#[test]
+fn muse_thread_approvals() {
+    let asking = [
+        ("UserPromptSubmit", json!({})),
+        ("SubagentStart", json!({"agent_id": "th2"})),
+        (
+            "PreToolUse",
+            json!({"agent_id": "th2", "tool_use_id": "tu1", "digest": "d1"}),
+        ),
+        (
+            "PermissionRequest",
+            json!({"agent_id": "th2", "digest": "d1"}),
+        ),
+    ];
+    let t = muse(&asking);
+    assert_eq!(
+        t.cause("/muse").as_deref(),
+        Some("/muse/session:s1/turn:p1/agent:th2/request:tu1")
+    );
+    let granted = [
+        asking.as_slice(),
+        &[(
+            "ToolUseStart",
+            json!({"agent_id": "th2", "tool_use_id": "tu1"}),
+        )],
+    ]
+    .concat();
+    assert_eq!(muse(&granted).state("/muse"), Some(State::Working));
 }
