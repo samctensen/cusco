@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/samctensen/cusco/main/docs/api-v1.schema.json",
-  "title": "Cusco API v1",
-  "description": "Requests a consumer sends to Cusco's api.sock, and the messages Cusco sends back. Each is one JSON object on one line. Within v1, Cusco may add message types, fields, attributes, kinds, reasons and error codes; consumers should ignore what they don't recognize. See docs/api.md.",
+  "$id": "https://raw.githubusercontent.com/samctensen/eywa/main/docs/api-v1.schema.json",
+  "title": "Eywa API v1",
+  "description": "Requests a consumer sends to Eywa's api.sock, and the messages Eywa sends back. Each is one JSON object on one line. Within v1, Eywa may add message types, fields, attributes, kinds, reasons and error codes; consumers should ignore what they don't recognize. See docs/api.md.",
   "oneOf": [{ "$ref": "#/$defs/Request" }, { "$ref": "#/$defs/Message" }],
   "$defs": {
     "Request": {
@@ -12,7 +12,7 @@
       "properties": {
         "v": { "const": 1 },
         "op": {
-          "description": "get: one snapshot, then the connection closes. subscribe: a snapshot, then every change. stop: shut Cusco down.",
+          "description": "get: one snapshot, then the connection closes. subscribe: a snapshot, then every change. stop: shut Eywa down.",
           "enum": ["get", "subscribe", "stop"]
         },
         "view": {
@@ -35,7 +35,7 @@
       }
     },
     "Message": {
-      "description": "One line from Cusco.",
+      "description": "One line from Eywa.",
       "oneOf": [
         { "$ref": "#/$defs/Snapshot" },
         { "$ref": "#/$defs/Upsert" },
@@ -78,7 +78,7 @@
       }
     },
     "Error": {
-      "description": "The request was rejected. Cusco closes the connection after it.",
+      "description": "The request was rejected. Eywa closes the connection after it.",
       "type": "object",
       "required": ["v", "type", "code", "message"],
       "properties": {
@@ -93,7 +93,7 @@
       }
     },
     "Stopping": {
-      "description": "The answer to stop. Cusco then closes every connection and exits.",
+      "description": "The answer to stop. Eywa then closes every connection and exits.",
       "type": "object",
       "required": ["v", "type"],
       "properties": {
@@ -102,7 +102,7 @@
       }
     },
     "Revision": {
-      "description": "Goes up by one with every change Cusco publishes, and starts again from zero when Cusco restarts. Never compare revisions from different connections.",
+      "description": "Goes up by one with every change Eywa publishes, and starts again from zero when Eywa restarts. Never compare revisions from different connections.",
       "type": "integer",
       "minimum": 0
     },
@@ -123,7 +123,7 @@
       "enum": ["machine", "client", "process", "session", "turn", "agent", "request"]
     },
     "State": {
-      "description": "Derived from the node's whole subtree. The first that applies: needs_input (an open request), working (an open turn or subagent), unknown (something open Cusco can't confirm), idle.",
+      "description": "Derived from the node's whole subtree. The first that applies: needs_input (an open request), working (an open turn or subagent), unknown (something open Eywa can't confirm), idle.",
       "enum": ["needs_input", "working", "unknown", "idle"]
     },
     "Reason": {
@@ -216,7 +216,7 @@
       }
     },
     "Observes": {
-      "description": "What a client lets Cusco see, so a consumer can tell really idle from can't see.",
+      "description": "What a client lets Eywa see, so a consumer can tell really idle from can't see.",
       "type": "object",
       "required": ["agents", "approvals", "questions", "mcp_input", "interrupts"],
       "properties": {
@@ -228,7 +228,7 @@
         "questions": { "description": "Questions to the user are visible.", "type": "boolean" },
         "mcp_input": { "description": "MCP input requests are visible.", "type": "boolean" },
         "interrupts": {
-          "description": "hook: the client reports interrupted turns. inferred: Cusco infers them.",
+          "description": "hook: the client reports interrupted turns. inferred: Eywa infers them.",
           "enum": ["hook", "inferred"]
         }
       }
@@ -243,7 +243,7 @@
           "minimum": 1
         },
         "surface": {
-          "description": "Where the session runs. Claude Code entry points Cusco doesn't recognize pass through unchanged.",
+          "description": "Where the session runs. Claude Code entry points Eywa doesn't recognize pass through unchanged.",
           "type": "string",
           "examples": ["cli", "desktop", "ide"]
         },

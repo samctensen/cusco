@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use cusco::tree::{
+use eywa::tree::{
     Attribution, Client, Detection, Event, Millis, Observes, Outcome, STALE_AFTER, Tree,
 };
 use std::io::{BufRead, BufReader, Write};
@@ -72,15 +72,15 @@ impl Drop for TempDir {
 pub fn temp_dir(tag: &str) -> TempDir {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, Ordering::SeqCst);
-    let path = PathBuf::from(format!("/tmp/cusco-{tag}-{}-{n}", std::process::id()));
+    let path = PathBuf::from(format!("/tmp/eywa-{tag}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&path);
     std::fs::create_dir_all(&path).unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
     TempDir(path)
 }
 
-pub fn config(dir: &Path) -> cusco::server::Config {
-    cusco::server::Config {
+pub fn config(dir: &Path) -> eywa::server::Config {
+    eywa::server::Config {
         dir: dir.to_path_buf(),
         stale_after: 2_000,
         subscriber_queue: 256,
@@ -89,8 +89,8 @@ pub fn config(dir: &Path) -> cusco::server::Config {
     }
 }
 
-pub fn start(dir: &Path) -> cusco::server::Server {
-    cusco::server::serve(config(dir)).unwrap()
+pub fn start(dir: &Path) -> eywa::server::Server {
+    eywa::server::serve(config(dir)).unwrap()
 }
 
 /// Connects to the API socket and sends one request line.
@@ -151,15 +151,15 @@ pub fn wait_for_snapshot(
     }
 }
 
-/// Runs the `cusco` binary with `CUSCO_DIR` set to `dir`.
-pub fn run_cusco(args: &[&str], dir: &Path, stdin: &str) -> Output {
-    run_cusco_env(args, dir, &[], stdin)
+/// Runs the `eywa` binary with `EYWA_DIR` set to `dir`.
+pub fn run_eywa(args: &[&str], dir: &Path, stdin: &str) -> Output {
+    run_eywa_env(args, dir, &[], stdin)
 }
 
-pub fn run_cusco_env(args: &[&str], dir: &Path, envs: &[(&str, &Path)], stdin: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cusco"))
+pub fn run_eywa_env(args: &[&str], dir: &Path, envs: &[(&str, &Path)], stdin: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_eywa"))
         .args(args)
-        .env("CUSCO_DIR", dir)
+        .env("EYWA_DIR", dir)
         .envs(envs.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

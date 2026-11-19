@@ -1,7 +1,7 @@
-//! The hook command: turns one hook payload into one datagram for Cusco.
+//! The hook command: turns one hook payload into one datagram for Eywa.
 //!
 //! It never writes to stdout, because Claude Code reads hook stdout on some
-//! events, and it never fails or waits: if Cusco isn't running, the record is
+//! events, and it never fails or waits: if Eywa isn't running, the record is
 //! dropped.
 
 use crate::process;
@@ -18,13 +18,13 @@ pub const INGEST_SOCKET: &str = "ingest.sock";
 const MAX_PAYLOAD_BYTES: u64 = 64 << 20;
 const SEND_BUFFER_BYTES: libc::c_int = 65_536;
 
-/// `$CUSCO_DIR`, or `~/Library/Application Support/cusco`.
+/// `$EYWA_DIR`, or `~/Library/Application Support/eywa`.
 pub fn default_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("CUSCO_DIR") {
+    if let Some(dir) = std::env::var_os("EYWA_DIR") {
         return PathBuf::from(dir);
     }
     let home = std::env::var_os("HOME").unwrap_or_default();
-    PathBuf::from(home).join("Library/Application Support/cusco")
+    PathBuf::from(home).join("Library/Application Support/eywa")
 }
 
 /// Sends a record to the ingest socket without blocking. A record that the
@@ -84,7 +84,7 @@ pub fn run_hook(client: &str, input: impl Read, dir: &Path) {
             .surface
             .get_or_insert_with(|| process::surface(pid).to_string());
     }
-    if let Some(path) = std::env::var_os("CUSCO_RECORD") {
+    if let Some(path) = std::env::var_os("EYWA_RECORD") {
         let _ = append_line(Path::new(&path), &record);
     }
     let _ = send_record(dir, &record);

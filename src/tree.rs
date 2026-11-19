@@ -1,4 +1,4 @@
-//! The node tree: what Cusco has observed, and the states derived from it.
+//! The node tree: what Eywa has observed, and the states derived from it.
 //!
 //! Every node is identified by its path, for example
 //! `/claude/session:7f3a/turn:12/agent:a2/request:t9`. The machine is `/` and
@@ -116,7 +116,7 @@ pub struct Client {
     pub observes: Observes,
 }
 
-/// What a client lets Cusco see, published on its row so a consumer can tell
+/// What a client lets Eywa see, published on its row so a consumer can tell
 /// "really idle" from "can't see this".
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Observes {
@@ -139,13 +139,13 @@ pub enum Attribution {
     None,
 }
 
-/// How Cusco learns that the user interrupted a turn.
+/// How Eywa learns that the user interrupted a turn.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Detection {
     /// The client reports it.
     Hook,
-    /// Cusco infers it from what happens next.
+    /// Eywa infers it from what happens next.
     Inferred,
 }
 
@@ -262,7 +262,7 @@ impl Tree {
     }
 
     /// Moves a node's `since` back to `at` when a source knows its current
-    /// state began before Cusco saw it.
+    /// state began before Eywa saw it.
     pub fn backdate(&mut self, id: &str, state: State, at: Millis) {
         if let Some((known, since)) = self.states.get_mut(id)
             && *known == state

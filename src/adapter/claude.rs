@@ -23,7 +23,7 @@ const CLIENT: Client = Client {
 };
 
 /// The turn opened for a busy session whose turn no hook has reported yet:
-/// Cusco started mid-turn, or the registry reported the turn before its
+/// Eywa started mid-turn, or the registry reported the turn before its
 /// prompt hook did. The first hook that names the real turn renames it.
 const UNREPORTED_TURN: &str = "running";
 

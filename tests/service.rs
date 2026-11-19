@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use cusco::hook::send_record;
-use cusco::record::HookRecord;
+use eywa::hook::send_record;
+use eywa::record::HookRecord;
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 
@@ -116,7 +116,7 @@ fn one_service_per_directory() {
     let dir = temp_dir("sock");
     std::fs::write(dir.path().join("api.sock"), b"").unwrap(); // left behind by a crash
     let first = start(dir.path());
-    let second = cusco::server::serve(config(dir.path()));
+    let second = eywa::server::serve(config(dir.path()));
     assert_eq!(
         second.err().map(|error| error.kind()),
         Some(std::io::ErrorKind::AddrInUse)
@@ -128,13 +128,13 @@ fn one_service_per_directory() {
 #[test]
 fn directory_must_be_private() {
     let dir = temp_dir("perm");
-    let created = dir.path().join("cusco");
-    drop(cusco::server::serve(config(&created)).unwrap());
+    let created = dir.path().join("eywa");
+    drop(eywa::server::serve(config(&created)).unwrap());
     let mode = std::fs::metadata(&created).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o700);
 
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
-    let refused = cusco::server::serve(config(dir.path()));
+    let refused = eywa::server::serve(config(dir.path()));
     assert_eq!(
         refused.err().map(|error| error.kind()),
         Some(std::io::ErrorKind::PermissionDenied)
@@ -144,8 +144,8 @@ fn directory_must_be_private() {
 /// A subscriber that stops reading is dropped; the others keep receiving.
 #[test]
 fn slow_subscriber_is_dropped() {
-    use cusco::api::{Selection, Subscribers};
-    use cusco::row::Change;
+    use eywa::api::{Selection, Subscribers};
+    use eywa::row::Change;
     let mut subscribers = Subscribers::new(2);
     let root = || Selection::Tree {
         path: "/".into(),
@@ -164,28 +164,28 @@ fn slow_subscriber_is_dropped() {
 #[test]
 fn command_line() {
     let dir = temp_dir("cli");
-    let output = run_cusco(&["status"], dir.path(), "");
+    let output = run_eywa(&["status"], dir.path(), "");
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cusco is not running"));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("eywa is not running"));
 
     // The hook command never fails and never prints, even with nothing listening.
     let payload = r#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt_id":"p1"}"#;
-    let output = run_cusco(&["hook", "claude"], dir.path(), payload);
+    let output = run_eywa(&["hook", "claude"], dir.path(), payload);
     assert!(output.status.success() && output.stdout.is_empty());
 
-    // A client that ignored `args` would run bare `cusco`. That must not fail
+    // A client that ignored `args` would run bare `eywa`. That must not fail
     // a hook: exit code 2 blocks a tool call.
-    let output = run_cusco(&[], dir.path(), payload);
+    let output = run_eywa(&[], dir.path(), payload);
     assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
 
     let _service = start(dir.path());
-    run_cusco(&["hook", "claude"], dir.path(), payload);
+    run_eywa(&["hook", "claude"], dir.path(), payload);
     wait_for_snapshot(
         dir.path(),
         r#"{"v":1,"op":"get","path":"/claude","depth":0}"#,
         |s| s["rows"][0]["state"] == "working",
     );
-    let output = run_cusco(
+    let output = run_eywa(
         &["status", "--path", "/claude", "--depth", "0"],
         dir.path(),
         "",
@@ -194,7 +194,7 @@ fn command_line() {
     assert_eq!(snapshot["rows"][0]["state"], "working");
 }
 
-/// `cusco stop` ends the service, which closes its subscribers' connections
+/// `eywa stop` ends the service, which closes its subscribers' connections
 /// and removes its socket.
 #[test]
 fn stop_ends_the_service() {
@@ -204,7 +204,7 @@ fn stop_ends_the_service() {
     next_json(&mut watcher);
     let served = std::thread::spawn(move || service.wait());
 
-    let output = run_cusco(&["stop"], dir.path(), "");
+    let output = run_eywa(&["stop"], dir.path(), "");
     assert!(output.status.success(), "{output:?}");
     served.join().unwrap();
     let mut rest = String::new();
@@ -215,56 +215,54 @@ fn stop_ends_the_service() {
     assert!(!dir.path().join("api.sock").exists());
 }
 
-/// Autostart is Cusco's plist in `~/Library/LaunchAgents`, written so that
-/// launchd reads back what Cusco meant, and it replaces a plist left by
-/// `brew services`. Only the copy for the default directory touches launchd.
+/// Autostart is Eywa's plist in `~/Library/LaunchAgents`, written so that
+/// launchd reads back what Eywa meant. Only the copy for the default
+/// directory touches launchd.
 #[test]
 fn autostart_writes_the_launch_agent() {
     let dir = temp_dir("autostart");
-    let output = run_cusco(&["start"], dir.path(), "");
+    let output = run_eywa(&["start"], dir.path(), "");
     assert_eq!(
         output.status.code(),
         Some(1),
-        "CUSCO_DIR leaves launchd alone"
+        "EYWA_DIR leaves launchd alone"
     );
 
     // Characters the plist's XML must escape.
     let home = dir.path().join("a & <b>");
     let agents = home.join("Library/LaunchAgents");
     std::fs::create_dir_all(&agents).unwrap();
-    let brew = agents.join("homebrew.mxcl.cusco.plist");
-    std::fs::write(&brew, "").unwrap();
     let autostart = |args: &[&str]| {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_cusco"))
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_eywa"))
             .arg("autostart")
             .args(args)
             .env("HOME", &home)
-            .env_remove("CUSCO_DIR")
+            .env_remove("EYWA_DIR")
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         String::from_utf8(output.stdout).unwrap()
     };
 
-    assert_eq!(autostart(&[]), "on\n", "brew's plist counts");
+    assert_eq!(autostart(&[]), "off\n");
     autostart(&["on"]);
-    assert!(!brew.exists());
-    let plist = agents.join("io.github.samctensen.cusco.plist");
+    assert_eq!(autostart(&[]), "on\n");
+    let plist = agents.join("io.github.samctensen.eywa.plist");
     let json = std::process::Command::new("plutil")
         .args(["-convert", "json", "-o", "-"])
         .arg(&plist)
         .output()
         .unwrap();
     let job: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    let cusco_dir = home.join("Library/Application Support/cusco");
+    let eywa_dir = home.join("Library/Application Support/eywa");
     assert_eq!(job["ProgramArguments"][1], "serve");
     assert_eq!(
-        job["EnvironmentVariables"]["CUSCO_DIR"],
-        cusco_dir.to_str().unwrap()
+        job["EnvironmentVariables"]["EYWA_DIR"],
+        eywa_dir.to_str().unwrap()
     );
     assert_eq!(
         job["StandardErrorPath"],
-        cusco_dir.join("cusco.log").to_str().unwrap()
+        eywa_dir.join("eywa.log").to_str().unwrap()
     );
     assert_eq!(job["KeepAlive"]["SuccessfulExit"], false);
 
@@ -287,27 +285,27 @@ fn setup_adds_and_removes_hooks() {
     let settings = claude.join("settings.json");
     let original = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\",\n            \"args\": [\"hook\", \"claude\"]\n          }\n        ]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
     std::fs::write(&settings, original).unwrap();
-    // Codex trusts hooks by position: an existing Cusco hook between two
+    // Codex trusts hooks by position: an existing Eywa hook between two
     // other hooks must stay where it is.
     let group = |command: &str| json!({"hooks": [{"type": "command", "command": command}]});
     let codex_hooks = codex.join("hooks.json");
     let stop = json!([
         group("first"),
-        group("/old/path/cusco hook codex"),
+        group("/old/path/eywa hook codex"),
         group("last")
     ]);
     std::fs::write(&codex_hooks, json!({"hooks": {"Stop": stop}}).to_string()).unwrap();
     // Grok has an entry in the old form, run through a shell.
     std::fs::create_dir_all(grok.join("hooks")).unwrap();
-    let old = json!({"hooks": {"Stop": [group("/old/path/cusco hook grok")]}});
-    std::fs::write(grok.join("hooks/cusco.json"), old.to_string()).unwrap();
+    let old = json!({"hooks": {"Stop": [group("/old/path/eywa hook grok")]}});
+    std::fs::write(grok.join("hooks/eywa.json"), old.to_string()).unwrap();
     let envs = [
         ("CLAUDE_CONFIG_DIR", claude.as_path()),
         ("CODEX_HOME", codex.as_path()),
         ("GROK_HOME", grok.as_path()),
         ("XDG_CONFIG_HOME", config.as_path()),
     ];
-    let setup = |args: &[&str]| run_cusco_env(args, dir.path(), &envs, "");
+    let setup = |args: &[&str]| run_eywa_env(args, dir.path(), &envs, "");
     let read = |path: &std::path::Path| -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     };
@@ -322,19 +320,19 @@ fn setup_adds_and_removes_hooks() {
         |value: &serde_json::Value| value["hooks"][0]["command"].as_str().unwrap().to_string();
     let entry = |value: &serde_json::Value| value["hooks"][0].clone();
     let claude_entry = entry(&parsed["hooks"]["PermissionRequest"][0]);
-    assert!(command(&parsed["hooks"]["PermissionRequest"][0]).ends_with("/cusco"));
+    assert!(command(&parsed["hooks"]["PermissionRequest"][0]).ends_with("/eywa"));
     assert_eq!(claude_entry["args"], json!(["hook", "claude"]));
     let stop = read(&codex_hooks)["hooks"]["Stop"].clone();
     assert_eq!(command(&stop[0]), "first");
     assert!(
-        command(&stop[1]).ends_with("cusco hook codex") && !command(&stop[1]).starts_with("/old")
+        command(&stop[1]).ends_with("eywa hook codex") && !command(&stop[1]).starts_with("/old")
     );
     assert_eq!(command(&stop[2]), "last");
     assert!(
         entry(&stop[1]).get("args").is_none(),
         "Codex has no shell-free form"
     );
-    let grok_stop = read(&grok.join("hooks/cusco.json"))["hooks"]["Stop"].clone();
+    let grok_stop = read(&grok.join("hooks/eywa.json"))["hooks"]["Stop"].clone();
     assert_eq!(
         grok_stop.as_array().unwrap().len(),
         1,
@@ -345,16 +343,16 @@ fn setup_adds_and_removes_hooks() {
     let muse_stop = read(&config.join("muse/settings.json"))["hooks"]["Stop"].clone();
     assert!(entry(&muse_stop[0]).get("args").is_none());
     // Without a shell the path is stored as it is; with one it is quoted.
-    let spaced = std::path::Path::new("/a b/cusco");
+    let spaced = std::path::Path::new("/a b/eywa");
     assert_eq!(
-        cusco::setup::hook_entry(spaced, "claude", true)["command"],
-        "/a b/cusco"
+        eywa::setup::hook_entry(spaced, "claude", true)["command"],
+        "/a b/eywa"
     );
     assert_eq!(
-        cusco::setup::hook_entry(spaced, "codex", false)["command"],
-        "'/a b/cusco' hook codex"
+        eywa::setup::hook_entry(spaced, "codex", false)["command"],
+        "'/a b/eywa' hook codex"
     );
-    assert!(read(&grok.join("hooks/cusco.json"))["hooks"]["StopCancelled"].is_array());
+    assert!(read(&grok.join("hooks/eywa.json"))["hooks"]["StopCancelled"].is_array());
     assert_eq!(
         read(&config.join("muse/settings.json"))["schema_version"],
         1
@@ -373,8 +371,8 @@ fn setup_adds_and_removes_hooks() {
         serde_json::from_str::<serde_json::Value>(original).unwrap()
     );
     assert!(
-        !grok.join("hooks/cusco.json").exists(),
-        "Cusco's own file goes"
+        !grok.join("hooks/eywa.json").exists(),
+        "Eywa's own file goes"
     );
 }
 
@@ -394,7 +392,7 @@ fn claude_session_file_drives_state() {
         std::fs::write(&file, state.to_string()).unwrap();
     };
     write("busy");
-    let _service = cusco::server::serve(cusco::server::Config {
+    let _service = eywa::server::serve(eywa::server::Config {
         claude_sessions: Some(sessions.clone()),
         ..config(dir.path())
     })
@@ -418,10 +416,10 @@ fn claude_session_file_drives_state() {
         snapshot["rows"][0]["attrs"].get("last_turn").is_none(),
         "idle is published before the outcome is known"
     );
-    // The file says when the status changed, which can be before Cusco looked.
+    // The file says when the status changed, which can be before Eywa looked.
     assert_eq!(snapshot["rows"][0]["since"], "2026-11-18T11:06:40.000Z");
 
-    // Another session's file changing makes Cusco read s1's idle again; the
+    // Another session's file changing makes Eywa read s1's idle again; the
     // outcome still arrives.
     let other = json!({"pid": std::os::unix::process::parent_id(), "sessionId": "s2",
                        "status": "idle"});
@@ -458,7 +456,7 @@ fn visualize_draws_the_tree() {
             "/claude/session:s9",
             "session",
             "needs_input",
-            json!({"cwd": "/src/cusco"}),
+            json!({"cwd": "/src/eywa"}),
         ),
         row(
             "/claude/session:s9/turn:p1",
@@ -481,7 +479,7 @@ fn visualize_draws_the_tree() {
         row("/codex", "client", "idle", json!({})),
     ]
     .into_iter()
-    .collect::<cusco::visualize::Rows>();
+    .collect::<eywa::visualize::Rows>();
     rows.get_mut("/claude/session:s5").unwrap()["since"] = json!("2026-11-18T20:01:00.000Z");
     let now = humantime::parse_rfc3339("2026-11-18T20:02:05Z").unwrap();
     let now = now
@@ -489,7 +487,7 @@ fn visualize_draws_the_tree() {
         .unwrap()
         .as_millis() as u64;
 
-    let screen = cusco::visualize::render(&rows, now, 60);
+    let screen = eywa::visualize::render(&rows, now, 60);
     let mut plain = String::new();
     let mut escape = false;
     for c in screen.chars() {
@@ -502,12 +500,12 @@ fn visualize_draws_the_tree() {
     }
     let lines: Vec<&str> = plain.lines().collect();
     let line = |text: &str| lines.iter().position(|line| line.contains(text)).unwrap();
-    assert!(lines[line("cusco ·")].contains("2 sessions"), "{plain}");
+    assert!(lines[line("eywa ·")].contains("2 sessions"), "{plain}");
     assert!(
-        lines[line("cusco s9")].contains("needs you 2m 05s"),
+        lines[line("eywa s9")].contains("needs you 2m 05s"),
         "{plain}"
     );
-    assert!(line("cusco s9") < line("approval") && line("approval") < line("lander"));
+    assert!(line("eywa s9") < line("approval") && line("approval") < line("lander"));
     assert!(
         line("lander") < line("agora"),
         "the latest chats come first"

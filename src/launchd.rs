@@ -1,10 +1,10 @@
 //! Runs the service as a per-user launchd job, so it keeps running in the
-//! background and comes back if it crashes. `cusco start` and `cusco stop`
-//! load and unload the job. `cusco autostart on` puts a copy of its plist in
+//! background and comes back if it crashes. `eywa start` and `eywa stop`
+//! load and unload the job. `eywa autostart on` puts a copy of its plist in
 //! `~/Library/LaunchAgents`, which launchd loads at every login.
 //!
-//! There's one job per user, for the default directory. A copy of Cusco
-//! pointed elsewhere with `CUSCO_DIR` runs with `cusco serve` instead.
+//! There's one job per user, for the default directory. A copy of Eywa
+//! pointed elsewhere with `EYWA_DIR` runs with `eywa serve` instead.
 
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -12,18 +12,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub const LABEL: &str = "io.github.samctensen.cusco";
-/// Where the job writes its output, in Cusco's directory.
-pub const LOG: &str = "cusco.log";
-/// The plist `start` loads. It sits in Cusco's directory rather than in
-/// `~/Library/LaunchAgents`, so starting Cusco doesn't also turn on autostart.
+pub const LABEL: &str = "io.github.samctensen.eywa";
+/// Where the job writes its output, in Eywa's directory.
+pub const LOG: &str = "eywa.log";
+/// The plist `start` loads. It sits in Eywa's directory rather than in
+/// `~/Library/LaunchAgents`, so starting Eywa doesn't also turn on autostart.
 const PLIST: &str = "launchd.plist";
-/// The labels `brew services` gave Cusco's job before Cusco ran its own.
-/// Cusco unloads those jobs, and counts their plists as autostart.
-const BREW_LABELS: [&str; 2] = ["homebrew.mxcl.cusco", "sh.brew.cusco"];
 
-/// The job runs `cusco serve` on `dir`, and launchd runs it again unless it
-/// exits cleanly, which `cusco stop` makes it do.
+/// The job runs `eywa serve` on `dir`, and launchd runs it again unless it
+/// exits cleanly, which `eywa stop` makes it do.
 pub fn plist(executable: &Path, dir: &Path) -> String {
     let string = |path: &Path| format!("<string>{}</string>", escape(&path.to_string_lossy()));
     let log = string(&dir.join(LOG));
@@ -41,7 +38,7 @@ pub fn plist(executable: &Path, dir: &Path) -> String {
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>CUSCO_DIR</key>
+    <key>EYWA_DIR</key>
     {dir}
   </dict>
   <key>RunAtLoad</key>
@@ -64,7 +61,7 @@ pub fn plist(executable: &Path, dir: &Path) -> String {
 }
 
 /// Loads the job from a fresh plist, after unloading any job already loaded,
-/// so launchd starts `cusco serve` now. `dir` must exist.
+/// so launchd starts `eywa serve` now. `dir` must exist.
 pub fn start(executable: &Path, dir: &Path) -> io::Result<()> {
     let path = dir.join(PLIST);
     write_plist(&path, &plist(executable, dir))?;
@@ -80,18 +77,16 @@ pub fn start(executable: &Path, dir: &Path) -> io::Result<()> {
     launchctl(&["bootstrap", &domain(), &path])
 }
 
-/// Unloads Cusco's job and any left by `brew services`. launchd stops a job
-/// that's still running. Autostart stays as it is.
+/// Unloads Eywa's job. launchd stops it if it's still running. Autostart
+/// stays as it is.
 pub fn stop() -> io::Result<()> {
-    for label in std::iter::once(LABEL).chain(BREW_LABELS) {
-        if loaded(label) {
-            launchctl(&["bootout", &format!("{}/{label}", domain())])?;
-        }
+    if loaded(LABEL) {
+        launchctl(&["bootout", &format!("{}/{LABEL}", domain())])?;
     }
     Ok(())
 }
 
-/// Whether launchd has Cusco's job loaded, running or not.
+/// Whether launchd has Eywa's job loaded, running or not.
 pub fn loaded(label: &str) -> bool {
     Command::new("launchctl")
         .args(["print", &format!("{}/{label}", domain())])
@@ -101,22 +96,13 @@ pub fn loaded(label: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Whether a job left by `brew services` is loaded.
-pub fn brew_loaded() -> bool {
-    BREW_LABELS.iter().any(|label| loaded(label))
-}
-
-/// Whether launchd starts Cusco at login.
+/// Whether launchd starts Eywa at login.
 pub fn autostart() -> bool {
-    std::iter::once(LABEL)
-        .chain(BREW_LABELS)
-        .any(|label| agent_plist(label).exists())
+    agent_plist(LABEL).exists()
 }
 
-/// Turns autostart on, replacing a plist left by `brew services`. A job
-/// already loaded keeps running as it is.
+/// Turns autostart on. A job already loaded keeps running as it is.
 pub fn enable_autostart(executable: &Path, dir: &Path) -> io::Result<()> {
-    remove_brew_plists()?;
     let path = agent_plist(LABEL);
     if let Some(agents) = path.parent() {
         std::fs::create_dir_all(agents)?;
@@ -125,16 +111,9 @@ pub fn enable_autostart(executable: &Path, dir: &Path) -> io::Result<()> {
 }
 
 /// Turns autostart off. A job already loaded keeps running until
-/// `cusco stop` or logout.
+/// `eywa stop` or logout.
 pub fn disable_autostart() -> io::Result<()> {
-    remove_brew_plists()?;
     remove(&agent_plist(LABEL))
-}
-
-fn remove_brew_plists() -> io::Result<()> {
-    BREW_LABELS
-        .iter()
-        .try_for_each(|label| remove(&agent_plist(label)))
 }
 
 fn agent_plist(label: &str) -> PathBuf {

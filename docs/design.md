@@ -1,27 +1,27 @@
-# Cusco
+# Eywa
 
 **Design · Draft v0.2 · 18 November 2026**
 
-Cusco is a per-user background service that watches the coding agents running on
+Eywa is a per-user background service that watches the coding agents running on
 your machine and answers one question for any program that asks: *which of my
 agents needs me?*
 
 You keep launching Claude Code, Codex, Grok Build and Muse Code the way you do today. Their hooks report
-lifecycle events to Cusco. Cusco keeps one live picture of everything that is
-running and publishes it over a local socket. Consumers such as the `cusco`
+lifecycle events to Eywa. Eywa keeps one live picture of everything that is
+running and publishes it over a local socket. Consumers such as the `eywa`
 command line, keyboard or desk lights, a menu bar app or a Stream Deck plugin
-subscribe to that picture and decide how to show it. Cusco defines the data and
+subscribe to that picture and decide how to show it. Eywa defines the data and
 the API. It has no UI and knows nothing about any consumer.
 
-The name comes from the Inca capital. Cusco sat at the center of a road network
-of roughly 40,000 km, and relay runners called chasquis carried messages along it
-to the capital. Here the hooks are the chasquis and the service is the capital.
+The name comes from Eywa, the great tree in Avatar that connects every living
+thing on Pandora. Here every agent, session, turn and request is a node in one
+tree, and each node's state sums up everything beneath it.
 
 ## First demonstration
 
 1. Claude Code and Codex run at the same time.
 2. Claude's main turn finishes while one of its subagents waits for tool approval.
-3. Start `cusco watch --json`. Its first message shows `claude` as `needs_input`,
+3. Start `eywa watch --json`. Its first message shows `claude` as `needs_input`,
    with `cause` pointing at the subagent's request, and `codex` as `working`.
 4. Approve the subagent and let it finish. Only the `claude` row changes, to
    `idle`.
@@ -35,15 +35,15 @@ to the capital. Here the hooks are the chasquis and the service is the capital.
 | turn | One prompt and the work done in response to it. |
 | agent | A subagent started inside a turn. It can outlive the turn. |
 | request | Something the agent is waiting on you for: a tool approval, a question or an MCP input request. |
-| hook command | `cusco hook <client>`, which each client's hooks run once per event. |
-| adapter | Client-specific code inside Cusco that maps a client's hook records onto a shared per-session tracker, which turns them into Cusco events. |
-| consumer | Any program that reads from Cusco's API. |
+| hook command | `eywa hook <client>`, which each client's hooks run once per event. |
+| adapter | Client-specific code inside Eywa that maps a client's hook records onto a shared per-session tracker, which turns them into Eywa events. |
+| consumer | Any program that reads from Eywa's API. |
 
 ## Data model
 
 ### One tree of nodes
 
-Cusco stores what it has observed, never conclusions. It does not store "Claude
+Eywa stores what it has observed, never conclusions. It does not store "Claude
 is working." It stores "turn 12 in session 7f3a is open" and "subagent a2 has an
 open approval request." Every higher-level answer is computed from that.
 
@@ -103,9 +103,9 @@ the subagent is still an open node beneath it. Elapsed time alone never produces
 "Is Claude running?", "is this session busy?" and "is that subagent waiting?" are
 the same question asked at different depths of the tree.
 
-**Implementation.** When a node changes, Cusco recomputes the state of that node
+**Implementation.** When a node changes, Eywa recomputes the state of that node
 and each of its ancestors from their children. Trees hold a few dozen nodes, so
-this costs nothing and leaves no counters to drift. Cusco publishes a change only
+this costs nothing and leaves no counters to drift. Eywa publishes a change only
 for rows whose published fields actually changed, so detail deep in a session
 doesn't create traffic at the client level.
 
@@ -133,13 +133,13 @@ an `observes` record, so a consumer can tell "really idle" from "can't see this"
 | `approvals` | `actor`: attributed to the subagent or main thread that asked. `turn`: only to the turn. `none`: not visible. |
 | `questions` | Questions to the user are visible. |
 | `mcp_input` | MCP input requests are visible. |
-| `interrupts` | `hook`: the client reports them. `inferred`: Cusco infers them from what happens next. |
+| `interrupts` | `hook`: the client reports them. `inferred`: Eywa infers them from what happens next. |
 
 ## Event flow
 
 ```
  Claude Code, Codex, ─┐
- Grok, Muse hooks ────┴─► cusco hook <client>   parses the client's payload and environment,
+ Grok, Muse hooks ────┴─► eywa hook <client>   parses the client's payload and environment,
                                  │              keeps allowed fields, hashes tool input,
                                  ▼  ingest.sock sends one datagram, exits
                           adapter, per client   maps events onto a per-session tracker
@@ -150,20 +150,20 @@ an `observes` record, so a consumer can tell "really idle" from "can't see this"
                                 core            tree → derived states → changed rows
                                  │
                                  ▼  api.sock
-           cusco status / watch · status lights · menu bar (requests view)
+           eywa status / watch · status lights · menu bar (requests view)
 ```
 
 ### Capture
 
-Each client's hook configuration runs `cusco hook <client>`. Where a client can
+Each client's hook configuration runs `eywa hook <client>`. Where a client can
 run a command with no shell (Claude Code and Grok Build, through `args`),
-`cusco setup` writes that form; Codex and Muse Code run the command through a
-shell. Run with no arguments and piped input, `cusco` exits 0 silently, so a
+`eywa setup` writes that form; Codex and Muse Code run the command through a
+shell. Run with no arguments and piped input, `eywa` exits 0 silently, so a
 client that ignores `args` can't fail a hook. The hook command
 parses the client's payload and hook environment into one record shape, keeps only
-the allowed fields, sends them as one datagram to Cusco's ingest socket and exits.
-If Cusco isn't running, it exits immediately with status 0. It never prints: every
-client feeds some hook output back to the agent. The agent never waits on Cusco.
+the allowed fields, sends them as one datagram to Eywa's ingest socket and exits.
+If Eywa isn't running, it exits immediately with status 0. It never prints: every
+client feeds some hook output back to the agent. The agent never waits on Eywa.
 
 | Client | Payload | Environment |
 | --- | --- | --- |
@@ -173,12 +173,12 @@ client feeds some hook output back to the agent. The agent never waits on Cusco.
 | Muse Code | snake_case; `turn_id`; `child_session_id` on subagent events | `MUSE_SESSION_ID` (the root session), `MUSE_THREAD_ID` (the acting thread) |
 
 Grok also runs Claude Code's hooks, with Grok's payload. When `GROK_HOOK_EVENT` is
-set, `cusco hook claude` relabels the record as `grok`. The copy that arrives
+set, `eywa hook claude` relabels the record as `grok`. The copy that arrives
 through Grok's own hook file is harmless, because every adapter step is idempotent.
 
 The hook command does no mapping. Mapping needs memory across events, such as
 which tool call an approval belongs to and whether the previous turn is still
-open, so it runs in the adapter inside Cusco.
+open, so it runs in the adapter inside Eywa.
 
 **Allowed fields:** event name, session id, turn or prompt id, agent id and type,
 tool use id (and the ids in a batch), tool name, notification type, source,
@@ -225,11 +225,11 @@ client.
 | `retract {id}` | A node closes without having ended: it stood in for another node, or only what is beneath it is running. It closes as `close` does and leaves its session's `last_turn` as it was. |
 | `attr {id, attrs}` | A node's attributes changed. |
 | `lost {scope}` | The open nodes in `scope` become unconfirmed. |
-| `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Cusco diffs it against what it has and publishes the changes. |
+| `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Eywa diffs it against what it has and publishes the changes. |
 
 Any event that mentions a node also confirms that node and its ancestors. An event
-for a node Cusco hasn't seen opens it implicitly, so a session or turn already
-running when Cusco starts shows as `working` from its first tool event.
+for a node Eywa hasn't seen opens it implicitly, so a session or turn already
+running when Eywa starts shows as `working` from its first tool event.
 
 **Order.** Synchronous hooks block the agent, so one thread's events arrive in
 order; only different threads interleave. Activity under a closed node's own id
@@ -266,7 +266,7 @@ session to confirm.
 
 ### Claude Code
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `SessionStart` | `open` session. A different session from the same process (`/clear`, resuming in a running process, a fork) ends the old one. |
 | `UserPromptSubmit` | `open` turn, keyed by `prompt_id`. `source` sets the turn's `origin`: `person` for `user` and `sdk`, `machine` otherwise, for example a background task reporting back. |
@@ -292,7 +292,7 @@ Claude has no interrupt hook. An interrupted turn closes on the next prompt, an
 `session_id` names the root thread for a whole agent tree. Inside a subagent,
 `agent_id` names the subagent and `turn_id` is the subagent's own turn.
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `SessionStart` | `open` session. Root only, just before the first turn. |
 | `UserPromptSubmit` | Root: `open` turn keyed by `turn_id`. Subagent: confirm the agent. |
@@ -307,7 +307,7 @@ Claude has no interrupt hook. An interrupted turn closes on the next prompt, an
 There is no `StopFailure`; a failed turn closes on the next prompt, `SessionEnd`
 or staleness. MCP input requests have no hook. Codex skips hooks until you trust
 them in `/hooks`, and keys that trust by position (file, event, group, handler),
-so `cusco setup` updates its entry where it sits and only ever appends new ones.
+so `eywa setup` updates its entry where it sits and only ever appends new ones.
 
 ### Grok Build
 
@@ -315,7 +315,7 @@ A subagent is a child session: `SubagentStart` names it, and its own events carr
 its session id. The adapter maps each child to the root session that spawned it,
 flattening nested subagents under the root turn.
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `UserPromptSubmit` | Root: `open` turn keyed by `promptId`. Child: confirm the agent. |
 | `PreToolUse` | Remember the call. `ask_user_question` and `AskQuestion` open a `question`. |
@@ -337,7 +337,7 @@ reported. Hooks in an untrusted folder are skipped silently.
 Records arrive with the root session as `session_id` and, inside a subagent thread,
 that thread as `agent_id`, both from the hook environment.
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `UserPromptSubmit` | Main thread: `open` turn keyed by `turn_id`. Subagent thread: confirm the agent. |
 | `PreToolUse` | Remember the call. |
@@ -352,14 +352,14 @@ that thread as `agent_id`, both from the hook environment.
 
 There is no interrupt hook; an interrupted turn closes on the next prompt or
 staleness. A question tool hasn't been identified (**verify**). One wrong-typed
-field disables every hook in Muse's settings file, so `cusco setup` writes exact
+field disables every hook in Muse's settings file, so `eywa setup` writes exact
 JSON and seeds a new file with `schema_version`.
 
 ## Local API v1
 
 ### Sockets
 
-Cusco listens on two Unix sockets in `~/Library/Application Support/cusco/`. The
+Eywa listens on two Unix sockets in `~/Library/Application Support/eywa/`. The
 directory is readable only by the current user.
 
 - `ingest.sock`: datagram socket for the hook command. One JSON record per datagram.
@@ -378,7 +378,7 @@ the path: `0` means only that node.
 
 | Operation | Behavior |
 | --- | --- |
-| `get` | Send one snapshot, then close the connection. Used by `cusco status` and scripts. |
+| `get` | Send one snapshot, then close the connection. Used by `eywa status` and scripts. |
 | `subscribe` | Send a snapshot, then stream changes until the consumer disconnects. |
 
 | View | Contents |
@@ -425,16 +425,16 @@ Depth only limits which rows are sent.
 
 - The snapshot's revision and the subscriber's registration happen in one step of
   the core, so no change falls between them.
-- Revisions increase with every published change during one run of Cusco. A
-  filtered subscriber sees gaps. After any reconnect, including after Cusco
+- Revisions increase with every published change during one run of Eywa. A
+  filtered subscriber sees gaps. After any reconnect, including after Eywa
   restarts, the new snapshot replaces the consumer's view entirely.
-- Each subscriber has a bounded queue. If a subscriber falls behind, Cusco closes
+- Each subscriber has a bounded queue. If a subscriber falls behind, Eywa closes
   its connection and the subscriber resubscribes. Hooks and other subscribers are
   never held up.
 
 ## Recovery
 
-Cusco holds no state across restarts. On startup it establishes what it can.
+Eywa holds no state across restarts. On startup it establishes what it can.
 
 **Processes.** It lists the running processes of each client by its process rule:
 
@@ -448,13 +448,13 @@ Cusco holds no state across restarts. On startup it establishes what it can.
   ancestor.
 
 **Claude Code's session registry.** Claude keeps one JSON file per running process
-in `~/.claude/sessions/`, with the session's id, process id and status. Cusco
+in `~/.claude/sessions/`, with the session's id, process id and status. Eywa
 watches the folder and every file with kqueue (Claude rewrites the files in place)
 and applies each status change:
 
 | Status | Effect |
 | --- | --- |
-| `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`. Cusco may have started mid-turn, or the registry reported a new turn before its `UserPromptSubmit` hook arrived. The first hook naming the real turn renames the placeholder: `open` the real turn, `retract` the placeholder. It is one turn and nothing ended, so `last_turn` still describes the turn before. Close any open request: going busy again after waiting means it was answered. |
+| `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`. Eywa may have started mid-turn, or the registry reported a new turn before its `UserPromptSubmit` hook arrived. The first hook naming the real turn renames the placeholder: `open` the real turn, `retract` the placeholder. It is one turn and nothing ended, so `last_turn` still describes the turn before. Close any open request: going busy again after waiting means it was answered. |
 | `waiting` | Open a request if none is open, else mark the open ones `prompted`. |
 | `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled and the session has no `last_turn`: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does, and then nothing is recorded. |
 
@@ -470,19 +470,19 @@ At startup this states every Claude session at once, with no `unknown`.
 **Later sources**, each a `sync` feed like the Claude registry: Codex's
 `thread_history_1.sqlite` and rollout files (open turns and subagents, not pending
 approvals), Muse's session registry and `session.jsonl`, and the Antigravity CLI's
-status line. If persistence turns out to be needed, Cusco can append normalized
+status line. If persistence turns out to be needed, Eywa can append normalized
 events to a log and replay them on start; it would store events, never derived
 state.
 
 ## Scope
 
-Cusco blocks on its sockets and wakes only for real work: an incoming event, a
+Eywa blocks on its sockets and wakes only for real work: an incoming event, a
 subscriber, a process exit, a registry change, or a deadline. It runs no polling
 loop.
 
 **v0.1:** the tree, the five events, the core, the Claude Code and Codex adapters,
 process liveness, `api.sock` with `get` and `subscribe`, the `tree` and `requests`
-views, `cusco status`, `cusco watch` and `cusco setup`.
+views, `eywa status`, `eywa watch` and `eywa setup`.
 
 **v0.2:** per-client hook parsing; the shared session tracker and the ordering
 rule; the `observes` record; the Grok Build and Muse Code adapters; process rules
@@ -493,7 +493,7 @@ with hosts; the Claude session registry; setup for all four clients.
 1. The first demonstration passes.
 2. With agents active, disconnect a subscriber, trigger an approval and
    reconnect. The first snapshot shows the waiting client.
-3. Restart Cusco during an approval. The client shows `needs_input` or `unknown`,
+3. Restart Eywa during an approval. The client shows `needs_input` or `unknown`,
    never `idle`. A false `idle` fails.
 4. Interrupt a Claude turn. It closes as `cancelled` within seconds, through the
    session registry.
@@ -501,16 +501,16 @@ with hosts; the Claude session registry; setup for all four clients.
    finishing does not clear the approval.
 6. Hook sequences replay as tests without a live agent.
 
-**Distribution:** a Homebrew tap (`brew install samctensen/tap/cusco`) builds
+**Distribution:** a Homebrew tap (`brew install samctensen/tap/eywa`) builds
 from the tagged source; `cargo install --git` is the path without Homebrew.
-`cusco start` loads a per-user launchd job that runs `cusco serve` and restarts
-it unless it exits cleanly, which `cusco stop` makes it do before unloading the
-job. `cusco autostart on` copies the job's plist into `~/Library/LaunchAgents`,
-so launchd also loads it at login. `cusco setup` adds or removes the hooks.
+`eywa start` loads a per-user launchd job that runs `eywa serve` and restarts
+it unless it exits cleanly, which `eywa stop` makes it do before unloading the
+job. `eywa autostart on` copies the job's plist into `~/Library/LaunchAgents`,
+so launchd also loads it at login. `eywa setup` adds or removes the hooks.
 
 **Next:** live verification of every **verify** item with recorded sessions; the
 Antigravity CLI adapter with its status line; Codex and Muse state sources;
-`cusco doctor` (hook trust, folder trust, silent hooks); prebuilt release
+`eywa doctor` (hook trust, folder trust, silent hooks); prebuilt release
 binaries; measured latency and idle-overhead targets.
 
 **Later:** Gemini CLI, OpenCode, Cursor, tool nodes, a `group_by: cwd` view
@@ -519,7 +519,7 @@ binaries; measured latency and idle-overhead targets.
 ## Open questions
 
 1. **"Finished, unseen."** An agent needs you when it's blocked mid-turn and also
-   when it has finished and is waiting for your next prompt. Cusco publishes
+   when it has finished and is waiting for your next prompt. Eywa publishes
    `last_turn`, and Claude turns carry an `origin` that tells your prompts from the
    machine's. A consumer `ack` operation would make "finished and not yet seen" a
    real state. Is `ack` worth adding to the core, or should consumers decide by
@@ -527,7 +527,7 @@ binaries; measured latency and idle-overhead targets.
 2. **Tool nodes.** `PreToolUse` and `PostToolUse` would give dashboards per-tool
    detail, at the cost of much more event traffic. Worth it, and for which views?
 3. **Reviewer-decided approvals.** Codex's automatic reviewer and Muse's model
-   reviewer decide some approvals after the approval hook fires, so Cusco briefly
+   reviewer decide some approvals after the approval hook fires, so Eywa briefly
    shows `needs_input` with nobody being asked. Where a "prompt shown" notification
    exists, it confirms a person is asked (`prompted`). Should consumers wait for
    it?

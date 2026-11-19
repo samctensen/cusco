@@ -1,4 +1,4 @@
-# OpenAI Codex: research briefing for Cusco
+# OpenAI Codex: research briefing for Eywa
 
 **18 November 2026.** Covers the Codex CLI, the desktop app (shipped on this Mac as
 `ChatGPT.app`), the IDE extension and the shared app-server daemon. Verified against
@@ -84,7 +84,7 @@ ignore it: `UserPromptSubmit`, `Stop`, `Interrupt`, `PreModelRequest` and
 The user `hooks.json` on this Mac belongs to another local tool. It registers eight
 events with `timeout: 2`: `UserPromptSubmit`, `PermissionRequest`, `PostToolUse`,
 `Stop`, `SessionEnd`, `Interrupt`, `SubagentStart` and `SubagentStop`. It doesn't
-register `PreToolUse` or `SessionStart`. Cusco isn't installed yet (local install).
+register `PreToolUse` or `SessionStart`. Eywa isn't installed yet (local install).
 
 ### How a command hook runs (source code: `hooks/src/engine/command_runner.rs`)
 
@@ -120,7 +120,7 @@ a 3 s maximum (docs).
   or `"deny"` with an optional `message`. Any deny wins. Returning `updatedInput`,
   `updatedPermissions` or `interrupt` fails closed (docs; source code:
   `events/permission_request.rs` "any deny wins").
-- **For Cusco:** exit 0 with empty stdout is a no-op on every event.
+- **For Eywa:** exit 0 with empty stdout is a no-op on every event.
 
 **Concurrency.**
 
@@ -132,7 +132,7 @@ a 3 s maximum (docs).
 - **Consequence:** with synchronous hooks, events from one thread arrive in step
   order, as long as the hook command delivers its datagram before it exits. Records
   can interleave only across threads (parent and subagents run concurrently) and
-  across parallel tool calls in one thread (inference from source). Cusco should
+  across parallel tool calls in one thread (inference from source). Eywa should
   **not** set `async`.
 
 ### Trust
@@ -150,10 +150,10 @@ a 3 s maximum (docs).
   covers a normalized identity: the event name plus the matcher group with that single
   handler, i.e. command, matcher, timeout, async and so on (source code). Plugin hooks
   also store `trusted_content_hash` for bundled scripts (local install).
-- **Consequences for `cusco setup`:**
-  - Inserting Cusco's group ahead of another tool's group in the same event array
+- **Consequences for `eywa setup`:**
+  - Inserting Eywa's group ahead of another tool's group in the same event array
     shifts that tool's index and untrusts it.
-  - Changing Cusco's command string or timeout untrusts Cusco.
+  - Changing Eywa's command string or timeout untrusts Eywa.
   - So append new groups, keep them in a fixed position, and keep the command stable
     (inference).
 - `~/.codex/.hook-trust/` holds files named by a 64-hex hash, each containing
@@ -174,14 +174,14 @@ a 3 s maximum (docs).
   - **Server-to-client requests:** `item/commandExecution/requestApproval`,
     `item/fileChange/requestApproval`, `item/permissions/requestApproval`,
     `item/tool/requestUserInput` and `mcpServer/elicitation/request`.
-  - `thread/status/changed` is almost exactly Cusco's derived state.
+  - `thread/status/changed` is almost exactly Eywa's derived state.
   - **Limits:**
     - Delivery is per connection and per thread. The README says threads a
       connection started, resumed or forked receive events, and "thread/unsubscribe
       or disconnect stops delivery" (source code: `app-server/README.md`).
     - A passive observer would have to attach to the daemon's private socket and
       resume each thread. That may keep threads loaded, which interferes with the
-      30-minute idle `SessionEnd`, and may make Cusco a target for approval requests
+      30-minute idle `SessionEnd`, and may make Eywa a target for approval requests
       (inference).
     - The protocol is marked experimental in `codex --help` (local install), and
       third-party clients aren't documented.
@@ -244,9 +244,9 @@ of `default`, `acceptEdits`, `plan`, `dontAsk` or `bypassPermissions`. In the ta
 
 ---
 
-## 4. Mapping to Cusco's model
+## 4. Mapping to Eywa's model
 
-| Cusco concept | Created by | Ended by |
+| Eywa concept | Created by | Ended by |
 | --- | --- | --- |
 | Session start / resume / fork | `SessionStart`. The source distinguishes `startup`, `resume` (reuses the id), `fork` (new thread, new id) and `clear` (new thread). `compact` fires mid-session after compaction and should only confirm the session (docs, source code). The first record of any kind implicitly opens it, because `SessionStart` is lazy. | `SessionEnd`. Whether `/clear` ends the old thread immediately or only after the idle unload is **unknown** (verify). |
 | Turn start | `UserPromptSubmit` without `agent_id`. A repeat with the **same** `turn_id` is steering: confirm the turn and don't cancel it (source code). Turns woken by agent mail or durable sleep have no `UserPromptSubmit`; their first sign is `PreToolUse`, `PermissionRequest` or `Stop` with an unseen `turn_id` (source code). | `Stop` → `ok` |
@@ -258,7 +258,7 @@ of `default`, `acceptEdits`, `plan`, `dontAsk` or `bypassPermissions`. In the ta
 | Tool approval requested | `PermissionRequest` (+`agent_id?`). Match it to the actor's open `PreToolUse` by digest, with `description` removed from `tool_input` (see §7). | — |
 | Approval granted | `PostToolUse` with that `tool_use_id` (success only), else the actor's next `PreToolUse` after the 1 s window, or the actor's turn ending (`Stop`, `SubagentStop`, `Interrupt`). | close `ok` |
 | Approval denied | **Nothing fires for the denial.** The tool fails, so no `PostToolUse`, and the model continues to the actor's next `PreToolUse` or `Stop` (source code, inference). "Deny and abort" cancels the turn and, for the root, should fire `Interrupt` (verify). A hook `deny` from `PermissionRequest` never shows a prompt. | as above |
-| Approval answered by Guardian | `PermissionRequest` fires, then the automatic reviewer decides without the user (source code). Hooks can't tell the cases apart: `permission_mode` reflects the approval policy, not the reviewer. Cusco will show `needs_input` for the review's duration (gap). | `PostToolUse`, or the next `PreToolUse` |
+| Approval answered by Guardian | `PermissionRequest` fires, then the automatic reviewer decides without the user (source code). Hooks can't tell the cases apart: `permission_mode` reflects the approval policy, not the reviewer. Eywa will show `needs_input` for the review's duration (gap). | `PostToolUse`, or the next `PreToolUse` |
 | Questions to the user | The `request_user_input` tool. The app-server exposes `item/tool/requestUserInput` (source code). As a function tool it should get `PreToolUse` and `PostToolUse` with that tool name (inference, **verify** the exact `tool_name`). Open a `question` request on its `PreToolUse` and close it on `PostToolUse` or the next actor event. | — |
 | MCP input requests | Elicitation exists (`mcpServer/elicitation/request`) but **no hook fires** (source code: no elicitation event). Not observable by hooks. | — |
 | Idle / waiting | No idle notification. A root session with no open turn is idle at the prompt. App-server `thread/status/changed` is the only explicit idle signal (source code). | — |
@@ -280,10 +280,10 @@ through `exec` (source code, inference).
 
 **Consequences:**
 
-- **One process hosts many sessions.** Process exit tells Cusco nothing per session.
+- **One process hosts many sessions.** Process exit tells Eywa nothing per session.
   When the daemon exits, every session it hosted is gone, but the daemon is
   long-lived and launchd-owned.
-- **Cusco's recovery rule produces permanent `unknown`.** The supervisor
+- **Eywa's recovery rule produces permanent `unknown`.** The supervisor
   (`codex app-server daemon pid-update-loop`) is correctly skipped. But the
   always-running `codex app-server` child gets an unconfirmed process node, so Codex
   shows `unknown` until some session reports, which may be never. Treat a
@@ -373,7 +373,7 @@ The adapter tracks one **actor** per event: the root (no `agent_id`) or a subage
 (`agent_id`). Root events use `turn_id` as the turn key. Subagent events never create
 turns.
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `SessionStart` | `open` session. `resume` reopens an ended session. `compact` only confirms it. |
 | `UserPromptSubmit` (root) | `open` turn keyed by `turn_id`. A different, still-open root turn closes as `cancelled`. The same `turn_id` is steering and only confirms. |
@@ -466,7 +466,7 @@ them.
       the shared `codex app-server`.
     - Per-session pid liveness doesn't apply. The design's supervisor rule skips
       only the supervisor, so the always-on app-server leaves Codex `unknown` forever
-      after a Cusco restart.
+      after an Eywa restart.
     - **Fix:** never create process nodes for `--managed-daemon` app-servers, and
       recover Codex through `sync` from `state_5.sqlite` and `thread_history_1.sqlite`
       or the rollouts. Derive `surface` from the persisted originator.
@@ -476,7 +476,7 @@ them.
       group and handler (source code).
     - The installer must append and never reorder, or it will untrust other tools'
       hooks.
-    - `cusco doctor` should read `[hooks.state]` to report "installed but not
+    - `eywa doctor` should read `[hooks.state]` to report "installed but not
       trusted", and check `allow_managed_hooks_only` and `features.hooks`.
 15. **Install `PreToolUse`.** The digest and actor-matching scheme depends on it.
     Other hook installations seen locally omit it.
@@ -578,4 +578,4 @@ were read:
 - `/Applications/ChatGPT.app/Contents/Info.plist`,
   `/Applications/ChatGPT.app/Contents/Resources/codex-cli/codex-package.json`
 - Process table (`ps`) for the running daemon and app-server
-- Cusco: `docs/design.md`, `src/adapter/codex.rs`, `src/adapter/mod.rs`, `src/record.rs`
+- Eywa: `docs/design.md`, `src/adapter/codex.rs`, `src/adapter/mod.rs`, `src/record.rs`

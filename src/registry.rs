@@ -2,7 +2,7 @@
 //! `~/.claude/sessions/`, with the session's id, process id and status
 //! (`busy`, `waiting` or `idle`). It states what hooks can only imply: an
 //! interrupted turn, a granted approval, and every session's state after
-//! Cusco restarts.
+//! Eywa restarts.
 //!
 //! Claude rewrites the files in place, so the watcher holds a kqueue watch on
 //! each file as well as on the folder. It reads the folder again whenever

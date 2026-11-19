@@ -1,4 +1,4 @@
-# Claude Code and Claude Desktop (Code tab): research briefing for Cusco
+# Claude Code and Claude Desktop (Code tab): research briefing for Eywa
 
 **18 November 2026.** Basis markers: (docs) = official Claude Code docs, read today;
 (source code) = the JavaScript embedded in the Claude Code 2.1.325 binary that Claude
@@ -23,7 +23,7 @@ Hooks are disabled for a run by `disableAllHooks` (respecting precedence),
 `--settings '{"disableAllHooks": true}'`, `--bare`, or managed `allowManagedHooksOnly`
 (blocks user, project, local and plugin hooks) (docs). In an interactive session in a
 folder the user hasn't trusted, *all* settings-file hooks, including the user's own,
-are held back until trust is accepted (docs). Each of these makes Cusco silently blind
+are held back until trust is accepted (docs). Each of these makes Eywa silently blind
 for that session.
 
 ## 2. Extension mechanism
@@ -35,10 +35,10 @@ the skill runs) and subagent frontmatter (while that subagent runs). Hook entrie
 **merge** across levels instead of overriding; the same handler defined in several
 settings files runs once, while plugin and skill copies stay separate. General settings
 precedence is managed > command line > local project > shared project > user.
-Directly edited settings are picked up by a file watcher (docs), so `cusco setup`
+Directly edited settings are picked up by a file watcher (docs), so `eywa setup`
 needs no restart. On this Mac, `~/.claude/settings.json` already contains command
 hooks from another local tool on nine events (2 s timeouts), and there is no
-managed-settings directory (local install). `cusco setup` must merge, not replace.
+managed-settings directory (local install). `eywa setup` must merge, not replace.
 
 **Format (docs).** `hooks.<Event>[] = { matcher?, hooks: [handler…] }`. Handler types:
 `command`, `http`, `mcp_tool`, `prompt`, `agent`. A `command` handler has `command`,
@@ -52,7 +52,7 @@ JavaScript regex. Tool events match `tool_name`; `SessionStart` matches `source`
 `SubagentStart`/`SubagentStop` match `agent_type`; `StopFailure` matches `error`;
 `Elicitation*` match the MCP server name. `UserPromptSubmit`, `PostToolBatch`, `Stop`,
 `TeammateIdle`, `TaskCreated`, `TaskCompleted`, `Worktree*`, `MessageDisplay` have no
-matcher. Cusco should omit matchers.
+matcher. Eywa should omit matchers.
 
 **Invocation (docs).** The JSON payload arrives on stdin. Command hooks run in the
 session's current directory with Claude Code's environment, in their own session with
@@ -91,7 +91,7 @@ ask, defer, `updatedInput`), `PermissionRequest` (decision object; exit 2 ignore
 (`retry`), `MessageDisplay` (rewrite text). Observational only: `PostToolUse`,
 `PostToolUseFailure` (stderr to Claude on exit 2), `Notification`, `StopFailure`,
 `SessionEnd`, `CwdChanged`, `PostCompact`, `PostModelSwitch`, `InstructionsLoaded`.
-Cusco's hook must print nothing and exit 0 on every path (inference from the above).
+Eywa's hook must print nothing and exit 0 on every path (inference from the above).
 It should be synchronous (not `async`) so cross-phase ordering holds, use exec form
 (`command` + `args`) to avoid a shell, and set a short `timeout`.
 
@@ -118,7 +118,7 @@ the folder is trusted. There is no per-hook trust or hash pinning as in Codex.
   only documented source that reports a *manual* approval or denial with its
   `tool_use_id`, but it needs the user to export telemetry to a local OTLP receiver.
 - Headless `stream-json` with `--include-hook-events` (docs) only covers processes
-  Cusco itself launches. Not useful for observing the user's sessions.
+  Eywa itself launches. Not useful for observing the user's sessions.
 - Status line (docs): a per-session script fed session JSON on stdin. Terminal UI
   only; not a reliable event source.
 
@@ -183,7 +183,7 @@ context), `agent_id` and `agent_type` (inside a subagent or in-process teammate)
 - `elicitation_id` (optional), `task_id` (to-do items), `session_crons[].id`,
   `teammate_name`. No request id reaches hooks; OTel carries the API `request_id`.
 
-## 4. Mapping to Cusco's model
+## 4. Mapping to Eywa's model
 
 **Session.**
 - Start: `SessionStart`. `startup` = new id. `resume` (`--resume`, `--continue`,
@@ -232,7 +232,7 @@ context), `agent_id` and `agent_type` (inside a subagent or in-process teammate)
 `background_tasks`; a subagent task's `id` equals its `agent_id` (source code).
 Teammates: in-process teammates have an `agent_id` and fire `SubagentStart` per
 message, `SubagentStop`, `TeammateIdle` (docs). Split-pane teammates (tmux or iTerm2)
-are separate `claude` processes, each with its own session (inference). Cusco sees
+are separate `claude` processes, each with its own session (inference). Eywa sees
 them as unrelated sessions.
 
 **Tool approvals.**
@@ -333,7 +333,7 @@ approval"; the registry's `waitingFor` can. Emit the result as one `sync`.
 
 ## 7. Proposed adapter
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `SessionStart` | `open` session. If `CLAUDE_PID` (or the walk) maps the process to a different session, close that one (covers `clear`, in-session `resume`, `/branch`). `compact` keeps the id: no close. |
 | `UserPromptSubmit` | `open` turn keyed by `prompt_id`, attr `origin` from `source` (`user`/`sdk` = person, anything else = machine). Close a different open turn as `cancelled`. |
@@ -399,7 +399,7 @@ approval"; the registry's `waitingFor` can. Emit the result as one `sync`.
 15. **Recovery:** seed from `claude agents --json` or `~/.claude/sessions/<pid>.json`
     rather than leaving every pre-existing process `unknown`.
 16. **Setup:** sync exec-form command hooks, short `timeout`, no stdout, no matchers,
-    merged into existing hooks. `cusco doctor` should flag `disableAllHooks`,
+    merged into existing hooks. `eywa doctor` should flag `disableAllHooks`,
     `allowManagedHooksOnly`, untrusted folders (hooks silent while the process lives)
     and `--bare`.
 

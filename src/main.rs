@@ -1,6 +1,6 @@
-use cusco::launchd;
-use cusco::server::{self, API_SOCKET, Config, SUBSCRIBER_QUEUE, default_dir};
-use cusco::tree::STALE_AFTER;
+use eywa::launchd;
+use eywa::server::{self, API_SOCKET, Config, SUBSCRIBER_QUEUE, default_dir};
+use eywa::tree::STALE_AFTER;
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
@@ -8,23 +8,23 @@ use std::path::Path;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  cusco setup [claude] [codex] [grok] [muse] [--remove]
-  cusco start
-  cusco stop
-  cusco autostart [on|off]
-  cusco serve
-  cusco status [--json] [--requests] [--path <path>] [--depth <n>]
-  cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
-  cusco visualize
-  cusco hook <claude|codex|grok|muse>
-  cusco --version";
+  eywa setup [claude] [codex] [grok] [muse] [--remove]
+  eywa start
+  eywa stop
+  eywa autostart [on|off]
+  eywa serve
+  eywa status [--json] [--requests] [--path <path>] [--depth <n>]
+  eywa watch [--json] [--requests] [--path <path>] [--depth <n>]
+  eywa visualize
+  eywa hook <claude|codex|grok|muse>
+  eywa --version";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("hook") => {
             if let Some(client) = args.get(1) {
-                cusco::hook::run_hook(client, std::io::stdin().lock(), &default_dir());
+                eywa::hook::run_hook(client, std::io::stdin().lock(), &default_dir());
             }
             ExitCode::SUCCESS
         }
@@ -37,17 +37,17 @@ fn main() -> ExitCode {
         Some("watch") => query("subscribe", &args[1..]),
         Some("visualize") if args.len() == 1 => visualize(),
         Some("--version" | "-V") => {
-            println!("cusco {}", env!("CARGO_PKG_VERSION"));
+            println!("eywa {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        // A client that ignores a hook's `args` runs bare `cusco` with the
+        // A client that ignores a hook's `args` runs bare `eywa` with the
         // payload piped in. Failing there could block the agent's tool call.
         None if !std::io::stdin().is_terminal() => ExitCode::SUCCESS,
         _ => usage(),
     }
 }
 
-/// Adds Cusco's hook to the named clients, or to every client installed on
+/// Adds Eywa's hook to the named clients, or to every client installed on
 /// this machine when none are named.
 fn setup(args: &[String]) -> ExitCode {
     let remove = args.iter().any(|arg| arg == "--remove");
@@ -56,7 +56,7 @@ fn setup(args: &[String]) -> ExitCode {
         .map(String::as_str)
         .filter(|arg| *arg != "--remove")
         .collect();
-    let targets = cusco::setup::targets();
+    let targets = eywa::setup::targets();
     if named
         .iter()
         .any(|name| !targets.iter().any(|target| target.client == *name))
@@ -74,30 +74,30 @@ fn setup(args: &[String]) -> ExitCode {
         })
         .collect();
     if chosen.is_empty() {
-        eprintln!("cusco: found no supported agents to set up");
+        eprintln!("eywa: found no supported agents to set up");
         return ExitCode::FAILURE;
     }
-    let executable = match cusco::setup::stable_executable() {
+    let executable = match eywa::setup::stable_executable() {
         Ok(executable) => executable,
         Err(error) => {
-            eprintln!("cusco: {error}");
+            eprintln!("eywa: {error}");
             return ExitCode::FAILURE;
         }
     };
     let mut code = ExitCode::SUCCESS;
     for target in chosen {
         let path = target.path.display();
-        match cusco::setup::apply(&target, &executable, remove) {
-            Ok(cusco::setup::Outcome::Added) => {
+        match eywa::setup::apply(&target, &executable, remove) {
+            Ok(eywa::setup::Outcome::Added) => {
                 println!("{}: added hooks to {path}", target.client);
                 if target.client == "codex" {
                     println!("codex: open Codex and trust the new hooks with /hooks");
                 }
             }
-            Ok(cusco::setup::Outcome::Removed) => {
+            Ok(eywa::setup::Outcome::Removed) => {
                 println!("{}: removed hooks from {path}", target.client);
             }
-            Ok(cusco::setup::Outcome::Unchanged) => {
+            Ok(eywa::setup::Outcome::Unchanged) => {
                 println!("{}: nothing to change in {path}", target.client);
             }
             Err(error) => {
@@ -120,25 +120,25 @@ fn serve() -> ExitCode {
         dir: dir.clone(),
         stale_after: STALE_AFTER,
         subscriber_queue: SUBSCRIBER_QUEUE,
-        executables: cusco::process::ProcessRule::defaults(),
-        claude_sessions: Some(cusco::registry::default_dir()),
+        executables: eywa::process::ProcessRule::defaults(),
+        claude_sessions: Some(eywa::registry::default_dir()),
     };
     match server::serve(config) {
         Ok(server) => {
-            eprintln!("cusco: serving {}", dir.display());
+            eprintln!("eywa: serving {}", dir.display());
             server.wait();
-            eprintln!("cusco: stopped");
+            eprintln!("eywa: stopped");
             ExitCode::SUCCESS
         }
         Err(error) => {
-            eprintln!("cusco: {error}");
+            eprintln!("eywa: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
 /// Runs the service as a launchd job: in the background, and again if it
-/// crashes, until `cusco stop` or logout.
+/// crashes, until `eywa stop` or logout.
 fn start() -> ExitCode {
     if !launchd_managed() {
         return unmanaged();
@@ -147,47 +147,38 @@ fn start() -> ExitCode {
     let socket = dir.join(API_SOCKET);
     if UnixStream::connect(&socket).is_ok() {
         if launchd::loaded(launchd::LABEL) {
-            println!("cusco: already running");
+            println!("eywa: already running");
             return ExitCode::SUCCESS;
         }
-        if !launchd::brew_loaded() {
-            eprintln!("cusco: already running outside launchd; stop it with cusco stop first");
-            return ExitCode::FAILURE;
-        }
-        // Replace the job `brew services` started with Cusco's own.
-        if !stop_service(&socket) {
-            return ExitCode::FAILURE;
-        }
+        eprintln!("eywa: already running outside launchd; stop it with eywa stop first");
+        return ExitCode::FAILURE;
     }
-    let started = cusco::setup::stable_executable().and_then(|executable| {
+    let started = eywa::setup::stable_executable().and_then(|executable| {
         server::create_dir(&dir)?;
         launchd::start(&executable, &dir)
     });
     if let Err(error) = started {
-        eprintln!("cusco: {error}");
+        eprintln!("eywa: {error}");
         return ExitCode::FAILURE;
     }
     if wait_until(|| UnixStream::connect(&socket).is_ok()) {
-        println!("cusco: started");
+        println!("eywa: started");
         return ExitCode::SUCCESS;
     }
     let log = dir.join(launchd::LOG);
-    eprintln!(
-        "cusco: not answering after 5 seconds; see {}",
-        log.display()
-    );
+    eprintln!("eywa: not answering after 5 seconds; see {}", log.display());
     ExitCode::FAILURE
 }
 
 /// Stops the service and unloads its launchd job, so it stays stopped until
-/// `cusco start`, or the next login when autostart is on.
+/// `eywa start`, or the next login when autostart is on.
 fn stop() -> ExitCode {
     let socket = default_dir().join(API_SOCKET);
     let running = UnixStream::connect(&socket).is_ok();
     let managed = launchd_managed();
-    let loaded = managed && (launchd::loaded(launchd::LABEL) || launchd::brew_loaded());
+    let loaded = managed && launchd::loaded(launchd::LABEL);
     if !running && !loaded {
-        eprintln!("cusco is not running: no socket at {}", socket.display());
+        eprintln!("eywa is not running: no socket at {}", socket.display());
         return ExitCode::FAILURE;
     }
     // Asked over the socket, the service closes its connections and removes
@@ -196,10 +187,10 @@ fn stop() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if managed && let Err(error) = launchd::stop() {
-        eprintln!("cusco: {error}");
+        eprintln!("eywa: {error}");
         return ExitCode::FAILURE;
     }
-    println!("cusco: stopped");
+    println!("eywa: stopped");
     ExitCode::SUCCESS
 }
 
@@ -214,26 +205,26 @@ fn stop_service(socket: &Path) -> bool {
         let message: Value = serde_json::from_str(&line).unwrap_or_default();
         if message["type"] == "error" {
             let reason = message["message"].as_str().unwrap_or_default();
-            eprintln!("cusco: the service refused to stop: {reason}");
+            eprintln!("eywa: the service refused to stop: {reason}");
             return false;
         }
     }
     if wait_until(|| UnixStream::connect(socket).is_err()) {
         return true;
     }
-    eprintln!("cusco: still running after 5 seconds");
+    eprintln!("eywa: still running after 5 seconds");
     false
 }
 
-/// launchd runs the copy of Cusco that serves the default directory. One
-/// pointed elsewhere with `CUSCO_DIR` runs with `cusco serve`, and must not
+/// launchd runs the copy of Eywa that serves the default directory. One
+/// pointed elsewhere with `EYWA_DIR` runs with `eywa serve`, and must not
 /// replace or stop launchd's.
 fn launchd_managed() -> bool {
-    std::env::var_os("CUSCO_DIR").is_none()
+    std::env::var_os("EYWA_DIR").is_none()
 }
 
 fn unmanaged() -> ExitCode {
-    eprintln!("cusco: CUSCO_DIR is set; run this copy with cusco serve");
+    eprintln!("eywa: EYWA_DIR is set; run this copy with eywa serve");
     ExitCode::FAILURE
 }
 
@@ -261,7 +252,7 @@ fn autostart(args: &[String]) -> ExitCode {
             if on_off == "off" {
                 launchd::disable_autostart()
             } else {
-                cusco::setup::stable_executable().and_then(|executable| {
+                eywa::setup::stable_executable().and_then(|executable| {
                     let dir = default_dir();
                     server::create_dir(&dir)?;
                     launchd::enable_autostart(&executable, &dir)
@@ -271,10 +262,10 @@ fn autostart(args: &[String]) -> ExitCode {
         _ => return usage(),
     };
     match changed {
-        Ok(()) if args[0] == "on" => println!("cusco: autostart on; Cusco starts at every login"),
-        Ok(()) => println!("cusco: autostart off; Cusco won't start at login"),
+        Ok(()) if args[0] == "on" => println!("eywa: autostart on; Eywa starts at every login"),
+        Ok(()) => println!("eywa: autostart off; Eywa won't start at login"),
         Err(error) => {
-            eprintln!("cusco: {error}");
+            eprintln!("eywa: {error}");
             return ExitCode::FAILURE;
         }
     }
@@ -291,7 +282,7 @@ fn query(op: &str, flags: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     };
     if writeln!(stream, "{request}").is_err() {
-        eprintln!("cusco: the service closed the connection");
+        eprintln!("eywa: the service closed the connection");
         return ExitCode::FAILURE;
     }
     let mut stdout = std::io::stdout().lock();
@@ -318,10 +309,10 @@ fn visualize() -> ExitCode {
     let Some(stream) = connect() else {
         return ExitCode::FAILURE;
     };
-    match cusco::visualize::run(stream) {
+    match eywa::visualize::run(stream) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("cusco: {error}");
+            eprintln!("eywa: {error}");
             ExitCode::FAILURE
         }
     }
@@ -332,7 +323,7 @@ fn connect() -> Option<UnixStream> {
     let socket = default_dir().join(API_SOCKET);
     let stream = UnixStream::connect(&socket);
     if stream.is_err() {
-        eprintln!("cusco is not running: no socket at {}", socket.display());
+        eprintln!("eywa is not running: no socket at {}", socket.display());
     }
     stream.ok()
 }

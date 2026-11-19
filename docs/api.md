@@ -1,8 +1,8 @@
-# Cusco API v1
+# Eywa API v1
 
-This is the contract for programs that read from Cusco: status lights, menu bar
+This is the contract for programs that read from Eywa: status lights, menu bar
 apps, Stream Deck plugins, scripts. It covers how to connect, what to send,
-every message and field Cusco sends back with its type and when it's present,
+every message and field Eywa sends back with its type and when it's present,
 and how to keep a correct picture as things change.
 
 The same contract is published as a JSON Schema in
@@ -11,14 +11,14 @@ generating types.
 
 ## Connect
 
-Cusco listens on a Unix stream socket:
+Eywa listens on a Unix stream socket:
 
 ```
-~/Library/Application Support/cusco/api.sock
+~/Library/Application Support/eywa/api.sock
 ```
 
-If `CUSCO_DIR` is set in Cusco's environment, the socket is
-`$CUSCO_DIR/api.sock` instead. The directory is readable only by your user, so
+If `EYWA_DIR` is set in Eywa's environment, the socket is
+`$EYWA_DIR/api.sock` instead. The directory is readable only by your user, so
 only your own programs can connect.
 
 Each connection carries one request:
@@ -28,7 +28,7 @@ Each connection carries one request:
    64 KiB.
 3. Read messages: one JSON object per line, UTF-8.
 
-If the socket doesn't exist or refuses the connection, Cusco isn't running.
+If the socket doesn't exist or refuses the connection, Eywa isn't running.
 
 ## Requests
 
@@ -41,7 +41,7 @@ If the socket doesn't exist or refuses the connection, Cusco isn't running.
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `v` | integer | required | Always `1`. |
-| `op` | string | required | `get`: send one snapshot, then close the connection. `subscribe`: send a snapshot, then every change until you disconnect. `stop`: shut Cusco down, as `cusco stop` does. |
+| `op` | string | required | `get`: send one snapshot, then close the connection. `subscribe`: send a snapshot, then every change until you disconnect. `stop`: shut Eywa down, as `eywa stop` does. |
 | `view` | string | `"tree"` | `tree`: the nodes at and below `path`. `requests`: every open request across all clients, as a flat list. |
 | `path` | string | `"/"` | Tree view only. The node to start at, for example `/claude` or `/claude/session:7f3a`. |
 | `depth` | integer ≥ 0 | `1` | Tree view only. How many levels below `path` to include. `0` sends the node alone. |
@@ -78,13 +78,13 @@ Every message has `v` (always `1`) and `type`.
 | `snapshot` | `rev`: integer, `rows`: [Row] | Every row in your selection right now, sorted by `id`. Always the first message. |
 | `upsert` | `rev`: integer, `row`: Row | A row appeared, or one of its fields changed. Replace the whole row. |
 | `remove` | `rev`: integer, `id`: string | A row disappeared. |
-| `error` | `code`: string, `message`: string | The request was rejected. Cusco closes the connection after it. |
-| `stopping` | none | The answer to `stop`. Cusco then closes every connection and exits. |
+| `error` | `code`: string, `message`: string | The request was rejected. Eywa closes the connection after it. |
+| `stopping` | none | The answer to `stop`. Eywa then closes every connection and exits. |
 
-`rev` is the revision: an integer that goes up by one with every change Cusco
+`rev` is the revision: an integer that goes up by one with every change Eywa
 publishes, anywhere in the tree. A `subscribe` sends every change newer than
 its snapshot, in order, with none missed between the two. A filtered subscription sees gaps in `rev`, because it doesn't receive
-changes outside its selection. `rev` starts again from zero when Cusco
+changes outside its selection. `rev` starts again from zero when Eywa
 restarts, so never compare revisions from different connections.
 
 | Error `code` | Cause |
@@ -97,7 +97,7 @@ error. For a subscription, rows appear once that node exists.
 
 ## Rows
 
-A row is the published view of one node in Cusco's tree.
+A row is the published view of one node in Eywa's tree.
 
 ```json
 {
@@ -157,7 +157,7 @@ assume a row's parent is in your map: your depth may leave it out.
 | --- | --- | --- |
 | `machine` | none | Your Mac. Always present. |
 | `client` | machine | An agent app. One row for each supported app, always present, even when it isn't installed. |
-| `process` | client | A running agent process that hasn't reported a session yet, usually because it started before Cusco. Always `unknown`. It goes away when one of its sessions reports or the process exits. |
+| `process` | client | A running agent process that hasn't reported a session yet, usually because it started before Eywa. Always `unknown`. It goes away when one of its sessions reports or the process exits. |
 | `session` | client | One conversation. |
 | `turn` | session | One prompt and the work done in response to it. |
 | `agent` | turn or agent | A subagent. It can outlive the turn that started it. |
@@ -176,11 +176,11 @@ wins:
 | --- | --- | --- |
 | `needs_input` | An open request exists beneath it. | Waiting on you. `reason` says why and `cause` says where. |
 | `working` | An open turn or subagent exists beneath it. | Busy. |
-| `unknown` | Something is open that Cusco can't confirm: it started before Cusco did, or an open turn, subagent or request has heard nothing for an hour. | Can't tell. Not idle. |
+| `unknown` | Something is open that Eywa can't confirm: it started before Eywa did, or an open turn, subagent or request has heard nothing for an hour. | Can't tell. Not idle. |
 | `idle` | None of the above. | Nothing to do. |
 
 Elapsed time never makes anything `idle`, so an `idle` row really is idle,
-within what that client lets Cusco see. Check the client's
+within what that client lets Eywa see. Check the client's
 [`observes`](#client) record to find out what that is.
 
 ### Counts
@@ -197,7 +197,7 @@ within what that client lets Cusco see. Check the client's
 
 The four states always add up to `sessions`. `process` rows aren't sessions
 and aren't counted, so a client can be `unknown` with `sessions` at `0`: an
-agent process is running that Cusco hasn't heard from yet.
+agent process is running that Eywa hasn't heard from yet.
 
 ### Attributes
 
@@ -212,12 +212,12 @@ No attributes yet. `attrs` is `{}`.
 
 | Attribute | Type | Meaning |
 | --- | --- | --- |
-| `observes` | object | What this client lets Cusco see, so you can tell "really idle" from "can't see this". Always present. |
+| `observes` | object | What this client lets Eywa see, so you can tell "really idle" from "can't see this". Always present. |
 | `observes.agents` | boolean | Subagents are visible. |
 | `observes.approvals` | string | `actor`: approvals are attributed to the subagent or main thread that asked. `turn`: only to the turn. `none`: approvals aren't visible. |
 | `observes.questions` | boolean | Questions to you are visible. |
 | `observes.mcp_input` | boolean | MCP input requests are visible. |
-| `observes.interrupts` | string | `hook`: the client reports interrupted turns. `inferred`: Cusco infers them from what happens next. |
+| `observes.interrupts` | string | `hook`: the client reports interrupted turns. `inferred`: Eywa infers them from what happens next. |
 
 What each client reports today:
 
@@ -234,8 +234,8 @@ What each client reports today:
 | --- | --- | --- |
 | `cwd` | string | The session's working directory, as an absolute path. |
 | `pid` | integer | The agent process the session runs in. Several sessions can share one process. |
-| `surface` | string | Where the session runs: `cli`, `desktop` or `ide`. Claude Code entry points Cusco doesn't recognize, such as SDK ones, pass through unchanged. |
-| `last_turn` | object | How the session's most recent turn ended. Missing until a turn ends, and while Cusco is still learning how the latest turn ended: after a Claude Code interrupt it follows the `idle` state by up to two seconds. |
+| `surface` | string | Where the session runs: `cli`, `desktop` or `ide`. Claude Code entry points Eywa doesn't recognize, such as SDK ones, pass through unchanged. |
+| `last_turn` | object | How the session's most recent turn ended. Missing until a turn ends, and while Eywa is still learning how the latest turn ended: after a Claude Code interrupt it follows the `idle` state by up to two seconds. |
 | `last_turn.outcome` | string | `ok`, `error` or `cancelled` (interrupted). |
 | `last_turn.ended_at` | string | When it ended, in the same format as `since`. |
 
@@ -268,18 +268,18 @@ there in every state.
    and `counts` already summarize everything beneath it, including rows outside
    your selection. A status light subscribes at depth `0` and reads one row.
 3. **Read promptly.** Each subscriber has a queue of 256 messages. If you fall
-   behind, Cusco closes your connection rather than slowing anything else down.
-4. **When the connection closes, subscribe again.** That happens when Cusco
+   behind, Eywa closes your connection rather than slowing anything else down.
+4. **When the connection closes, subscribe again.** That happens when Eywa
    restarts or when you fall behind. Wait about a second, reconnect, send the
    same request, and let the new snapshot replace everything. While you're
    disconnected, show your data as unavailable rather than as current.
 5. **Expect quiet.** A subscription only sends when something in its selection
    changes, and there's no heartbeat. A closed connection is the only sign
-   that Cusco stopped.
+   that Eywa stopped.
 6. **Drill down with `cause`.** `cause` names the node responsible for a
    state. If it isn't in your map, `get` it with `{"v":1,"op":"get","path":
    <cause>,"depth":0}`.
-7. **Treat `unknown` as unknown.** It means Cusco can't confirm what's
+7. **Treat `unknown` as unknown.** It means Eywa can't confirm what's
    happening, not that nothing is.
 8. **Ignore what you don't recognize.** Skip message types, fields and
    attributes you don't know, and handle enum values you don't know. See
@@ -287,7 +287,7 @@ there in every state.
 
 ## Compatibility
 
-Within version 1, Cusco may add message types, fields, attributes, kinds of
+Within version 1, Eywa may add message types, fields, attributes, kinds of
 node, request reasons and error codes. It won't remove or rename a field,
 change a field's type or change what a state means. Anything incompatible
 becomes version 2, requested with `"v":2`.
@@ -301,7 +301,7 @@ JSON Schema, make sure its enums don't reject new values when you decode.
 TypeScript definitions for the whole API:
 
 ```ts
-/** Cusco API v1. */
+/** Eywa API v1. */
 export type Kind = "machine" | "client" | "process" | "session" | "turn" | "agent" | "request";
 export type State = "needs_input" | "working" | "unknown" | "idle";
 export type Reason = "approval" | "question" | "mcp_input";
@@ -384,7 +384,7 @@ import os
 import socket
 import time
 
-DIR = os.environ.get("CUSCO_DIR") or os.path.expanduser("~/Library/Application Support/cusco")
+DIR = os.environ.get("EYWA_DIR") or os.path.expanduser("~/Library/Application Support/eywa")
 SOCKET = os.path.join(DIR, "api.sock")
 
 
@@ -409,14 +409,14 @@ def subscribe(request, on_change):
                         continue
                     on_change(rows)
         except OSError:
-            pass  # Cusco isn't running, or it restarted.
+            pass  # Eywa isn't running, or it restarted.
         on_change(None)  # Unavailable until the next snapshot.
         time.sleep(1)
 
 
 def show(rows):
     if rows is None:
-        print("cusco: unavailable", flush=True)
+        print("eywa: unavailable", flush=True)
         return
     machine = rows["/"]
     print(machine["state"], machine.get("reason", ""), machine.get("cause", ""), flush=True)
@@ -435,7 +435,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
-const dir = process.env.CUSCO_DIR ?? path.join(os.homedir(), "Library/Application Support/cusco");
+const dir = process.env.EYWA_DIR ?? path.join(os.homedir(), "Library/Application Support/eywa");
 const socketPath = path.join(dir, "api.sock");
 
 /** Calls onChange with every row after each message, or null while disconnected. */
@@ -459,7 +459,7 @@ export function subscribe(request: Request, onChange: (rows: Map<string, Row> | 
         break;
       case "error":
         rejected = true;
-        console.error(`cusco: ${message.code}: ${message.message}`);
+        console.error(`eywa: ${message.code}: ${message.message}`);
         return;
       default:
         return;
@@ -476,7 +476,7 @@ export function subscribe(request: Request, onChange: (rows: Map<string, Row> | 
 }
 
 subscribe({ v: 1, op: "subscribe", view: "requests" }, (rows) => {
-  if (!rows) return console.log("cusco: unavailable");
+  if (!rows) return console.log("eywa: unavailable");
   for (const row of rows.values()) console.log(row.attrs.reason, row.id);
 });
 ```

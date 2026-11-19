@@ -1,12 +1,12 @@
 mod common;
 
 use common::*;
-use cusco::process::{Hosting, ProcessRule};
+use eywa::process::{Hosting, ProcessRule};
 use std::time::Duration;
 
 /// The native Claude Code installer runs `~/.local/bin/claude`, a symlink to
 /// a versioned binary, so the kernel's executable path never ends in
-/// `claude`. Cusco also matches the name a process was launched as.
+/// `claude`. Eywa also matches the name a process was launched as.
 #[test]
 fn finds_an_agent_launched_through_a_symlink() {
     let dir = temp_dir("symlink");
@@ -17,7 +17,7 @@ fn finds_an_agent_launched_through_a_symlink() {
     let mut child = std::process::Command::new(&link).arg("30").spawn().unwrap();
     std::thread::sleep(Duration::from_millis(100));
     let rule = ProcessRule::new("claude", "claude", Hosting::Session);
-    let found = cusco::process::list_processes(&[rule]);
+    let found = eywa::process::list_processes(&[rule]);
     child.kill().unwrap();
     child.wait().unwrap();
     assert!(found.contains(&("claude", child.id())), "{found:?}");
@@ -34,7 +34,7 @@ fn running_agent_is_unknown_until_it_exits() {
         .arg("30")
         .spawn()
         .unwrap();
-    let _service = cusco::server::serve(cusco::server::Config {
+    let _service = eywa::server::serve(eywa::server::Config {
         executables: vec![ProcessRule::new(
             "claude",
             agent.to_string_lossy(),
@@ -69,7 +69,7 @@ fn muse_matches_by_prefix_and_hosts_are_left_out() {
     let mut host = start(&["serve"]);
     std::thread::sleep(Duration::from_millis(200));
     let rule = ProcessRule::new("muse", "muse-bin-*", Hosting::HostWhen(&["serve"]));
-    let found = cusco::process::list_processes(&[rule]);
+    let found = eywa::process::list_processes(&[rule]);
     for child in [&mut session, &mut host] {
         child.kill().unwrap();
         child.wait().unwrap();

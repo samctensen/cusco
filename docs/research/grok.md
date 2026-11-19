@@ -1,4 +1,4 @@
-# Grok Build: research briefing for a Cusco adapter
+# Grok Build: research briefing for an Eywa adapter
 
 **18 November 2026.** Basis tags: (docs) = Grok Build user guide; (source code) = the public
 `xai-org/grok-build` repository; (local install) = files, binaries and `--help` output on this
@@ -26,7 +26,7 @@ headless|leader`) (docs, local install).
 docs cover Cursor sign-in, hook compatibility with Cursor, opening "a session an earlier Grok or
 the Cursor CLI saved", and `grok worker`, which runs this machine as a Cursor private worker.
 
-| Surface | What it is | Version seen | Cusco relevance |
+| Surface | What it is | Version seen | Eywa relevance |
 | --- | --- | --- | --- |
 | CLI / TUI `grok` | Main interactive client | 1.0.89 (`28be5bb1bf65`) [stable] (local install) | Primary target |
 | Headless `grok -p` | One prompt, prints and exits | same binary | Same hooks. Your own hooks run without folder trust (docs) |
@@ -68,7 +68,7 @@ written by another tool, so the one-file-per-tool layout is established (local i
 
 ```json
 { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
-  { "type": "command", "command": "/path/cusco", "args": ["hook", "grok"], "timeout": 2 } ] } ] } }
+  { "type": "command", "command": "/path/eywa", "args": ["hook", "grok"], "timeout": 2 } ] } ] } }
 ```
 
 - Event keys accept PascalCase, snake_case and Cursor's camelCase. Unknown event names are skipped,
@@ -77,7 +77,7 @@ written by another tool, so the one-file-per-tool layout is established (local i
   `failClosed` / `onFailure`, `env`. Claude's `if` makes Grok skip the handler. Grok ignores
   `async` and `shell` and runs the hook in the foreground (docs).
 - When `args` is present, even as `[]`, Grok runs `command` directly with no shell. Without `args`,
-  it runs the command under `sh -c` (docs). Cusco should use the `args` form so the shell doesn't
+  it runs the command under `sh -c` (docs). Eywa should use the `args` form so the shell doesn't
   sit between the hook and Grok in the process tree.
 
 **Invocation.**
@@ -101,7 +101,7 @@ written by another tool, so the one-file-per-tool layout is established (local i
 - Queued `Notification` hooks get 1.5 s.
 - Each `SessionEnd` hook gets 1.5 s by default (`GROK_SESSION_END_HOOKS_TIMEOUT_MS`, up to 60 s).
 
-**Exit codes and stdout.** Hook output can change agent behavior, so Cusco's hook must print
+**Exit codes and stdout.** Hook output can change agent behavior, so Eywa's hook must print
 nothing and exit 0.
 
 - `0` allows.
@@ -123,7 +123,7 @@ hooks (docs). Hooks can also be switched off:
 - all user hooks, by the policy pin `allow_managed_hooks_only` (docs).
 
 `grok inspect` and the `/hooks` tab list load errors and disabled state (docs). This plays the same
-role as Codex's hook trust, so `cusco doctor` needs an "installed but folder not trusted" check.
+role as Codex's hook trust, so `eywa doctor` needs an "installed but folder not trusted" check.
 
 **Concurrency and order.**
 
@@ -133,7 +133,7 @@ role as Codex's hook trust, so `cusco doctor` needs an "installed but folder not
 - `SubagentStart` and `Notification` are dispatched without blocking the agent (source code).
 - On the shell route, `Notification` chains run up to 32 at a time per session (docs).
 - On the daemon route, observe hooks for every session share one pool: 32 running and 64 waiting.
-  Beyond that a dispatch **runs none of its hooks** (docs), so Cusco can lose events under load.
+  Beyond that a dispatch **runs none of its hooks** (docs), so Eywa can lose events under load.
 - `Stop`, `StopFailure` and `StopCancelled` go through one worker per session (docs).
 
 ## 3. Event catalog
@@ -197,7 +197,7 @@ role as Codex's hook trust, so `cusco doctor` needs an "installed but folder not
 - **Request id: none.** No event carries an approval or request id (source code).
 - **Tool call id: `toolUseId`,** on the four tool events only (source code).
 
-## 4. Mapping to Cusco's model
+## 4. Mapping to Eywa's model
 
 **Session.**
 
@@ -249,9 +249,9 @@ close the previous turn (docs).
   `sessionId` and `subagentType`. The adapter maps `child sessionId → (root session, turn,
   agent)` from `subagent_start` (inference).
 - **Nesting:** a subagent can spawn its own subagents. The default depth is 5 on the daemon route
-  and 1 on the shell route (docs). Cusco nests agents only under a turn, so nested agents would
+  and 1 on the shell route (docs). Eywa nests agents only under a turn, so nested agents would
   need flattening under the root turn (inference).
-- **Late starts:** for a child whose `subagent_start` Cusco never saw, nothing in the payload names
+- **Late starts:** for a child whose `subagent_start` Eywa never saw, nothing in the payload names
   its parent (gap; section 8).
 
 **Background work.**
@@ -292,19 +292,19 @@ name, keyed by `toolUseId`. Close it on the matching `post_tool_use` or `post_to
 (inference). It isn't known whether the question card also raises `permission_prompt`.
 
 **MCP input requests.** Grok has an MCP elicitation card (`x.ai/mcp/elicit`) (docs), but **no hook
-event and no `Notification` mapping** for it in the source snapshot (source code). Cusco can't see
+event and no `Notification` mapping** for it in the source snapshot (source code). Eywa can't see
 it.
 
 **Idle and waiting notifications.** `idle_prompt` arrives about 60 s after settling, with no
 `promptId` (docs). The docs' own recipe for a busy/idle indicator uses five registrations:
 `UserPromptSubmit`, `Stop`, `StopFailure`, `StopCancelled` and `Notification[idle_prompt]` (docs).
-`task_complete` and `agent_error` carry no state that Cusco needs (inference).
+`task_complete` and `agent_error` carry no state that Eywa needs (inference).
 
 **Event ordering and concurrency.**
 
 - `timestamp` is stamped at dispatch and reports can queue behind slow hooks, so correlate by
   `promptId`, not by the clock (docs).
-- A third-party blocking `Stop` gate makes `stop` fire again for every continuation round. Cusco
+- A third-party blocking `Stop` gate makes `stop` fire again for every continuation round. Eywa
   can't tell those fires from the final one, because `stopHookActive` is true for both (docs). The
   `idle_prompt` backstop then corrects it.
 - The daemon route's shared pool can drop dispatches (section 2).
@@ -317,7 +317,7 @@ it.
   `~/.grok/downloads/grok-1.0.89-macos-aarch64`, a 190 MB arm64 binary.
 - So the kernel reports a **versioned** executable name, and `argv[0]` is `grok`,
   `~/.grok/bin/grok`, or `agent`.
-- Cusco's existing rule (executable file name equals the client name, or the `argv[0]` basename
+- Eywa's existing rule (executable file name equals the client name, or the `argv[0]` basename
   does) matches the common case through `argv[0]` (inference). `agent` collides with the Cursor
   CLI's command name, so match `agent` only when the executable lives under `~/.grok/downloads/`
   (inference).
@@ -336,8 +336,8 @@ it.
 `GROK_HOME=~/Library/Application Support/com.grokapp.grok-app/agent-home`, which holds only
 `auth.json` and `config.toml` today (local install). Two consequences, both (inference):
 
-- **`~/.grok/hooks/` does not load for Grok.app sessions.** To cover them, Cusco would have to
-  write `agent-home/hooks/cusco.json` too.
+- **`~/.grok/hooks/` does not load for Grok.app sessions.** To cover them, Eywa would have to
+  write `agent-home/hooks/eywa.json` too.
 - `~/.claude/settings.json` hooks still load there, because Claude compatibility reads `~/.claude`
   whatever `GROK_HOME` says. The app sets only the MCP compatibility variables.
 
@@ -360,8 +360,8 @@ All three are (inference). `GROK_SESSION_ID` in the hook's environment duplicate
 
 **Claude-compatibility double fire.** This is the most important identity issue.
 
-- Grok runs the hooks in `~/.claude/settings.json` (docs). Cusco's Claude setup would therefore
-  run `cusco hook claude` **inside Grok sessions, with Grok-shaped payloads**.
+- Grok runs the hooks in `~/.claude/settings.json` (docs). Eywa's Claude setup would therefore
+  run `eywa hook claude` **inside Grok sessions, with Grok-shaped payloads**.
 - Those payloads have `session_id` but **no `prompt_id` and no `agent_id`**, which the Claude
   adapter depends on.
 - The two registrations are different commands, so Grok's handler dedupe doesn't merge them, and
@@ -400,7 +400,7 @@ $GROK_HOME/sessions/<url-encoded cwd>/<session-id>/
   update kinds for "turn started", "turn ended" and "permission requested" still have to be
   identified from a recording (section 8).
 - `transcriptPath` gives the path on the shell route but is missing on the daemon route (docs), so
-  Cusco would have to rebuild it from `cwd` and `sessionId`.
+  Eywa would have to rebuild it from `cwd` and `sessionId`.
 - Grok.app keeps its own journal under `~/Library/Application Support/com.grokapp.grok-app/` and
   CLI sessions under `…/agent-home/sessions/` (local install, strings).
 - Other local state:
@@ -421,7 +421,7 @@ three tables:
 "Actor" means the agent when `sessionId` is a known child (or the payload has `subagentType`),
 and otherwise the session's open turn.
 
-| Hook (`hookEventName`) | Cusco event |
+| Hook (`hookEventName`) | Eywa event |
 | --- | --- |
 | `session_start` | `open` session. With `source: new`, close the session previously seen from the same process (**verify**). With `source: load`, reopen. |
 | `user_prompt_submit` (main) | `open` turn keyed by `promptId`. Close any other open turn in the session as `cancelled` (cancel-and-send reports nothing). Set attr `wake: subagent` for the `subagent-completed-` prefix and `wake: remote` for `remote-turn-`. |
@@ -445,13 +445,13 @@ attributed to the turn, not the subagent, because `permission_prompt` names no a
 source suggests the root session raises it. Questions are attributed to the actor. MCP input is
 not observed.
 
-**`cusco setup` registrations.**
+**`eywa setup` registrations.**
 
-- **What:** write `$GROK_HOME/hooks/cusco.json` with one matcher group per event:
+- **What:** write `$GROK_HOME/hooks/eywa.json` with one matcher group per event:
   `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
   `PostToolUseFailure`, `PermissionDenied`, `Notification`, `SubagentStart`, `SubagentStop`,
   `Stop`, `StopFailure`, `StopCancelled`.
-- **Handler:** `{"type":"command","command":"<abs path to cusco>","args":["hook","grok"],
+- **Handler:** `{"type":"command","command":"<abs path to eywa>","args":["hook","grok"],
   "timeout":2}` with no matcher.
 - **Why a short timeout:** `PreToolUse`, `UserPromptSubmit`, `Stop` and `SubagentStop` are gates
   on the agent's critical path, and their defaults run to 30–600 s.
@@ -459,8 +459,8 @@ not observed.
 - **Hook command rules:**
   1. Print nothing and exit 0, always. stdout is read even for `PostToolUse`, and exit 2 feeds
      stderr to the model.
-  2. When invoked as `cusco hook claude` with `GROK_HOOK_EVENT` set, relabel the record as
-     `grok`. Don't drop it: Grok.app sessions reach Cusco only through `~/.claude/settings.json`.
+  2. When invoked as `eywa hook claude` with `GROK_HOOK_EVENT` set, relabel the record as
+     `grok`. Don't drop it: Grok.app sessions reach Eywa only through `~/.claude/settings.json`.
   3. Send the envelope's `timestamp`, so the adapter can drop the second copy of a firing that
      reached it through both registrations. Both handlers receive the same envelope, with an
      identical `timestamp`, `hookEventName`, `sessionId` and `toolUseId` (source code).
@@ -496,7 +496,7 @@ Confirm the following:
 6. **`/new` and `/clear`.** Is the `sessionId` new, and does the old session get `session_end`
    (and with which `reason`)? List the `session_end` `reason` values; they aren't documented.
 7. **`backgroundTasks[].id`.** For `type: subagent`, does it equal `subagentId`?
-8. **Unknown children.** For a child session first seen after Cusco started, how do we find its
+8. **Unknown children.** For a child session first seen after Eywa started, how do we find its
    root? Check `subagents/*/meta.json` in the parent's directory, the child's `summary.json`, and
    `session_kind`.
 9. **Grok.app.** Do its agents load `~/.claude/settings.json` hooks? Does it prompt for folder
@@ -545,7 +545,7 @@ All read on 18 November 2026.
 
 **Local**
 
-- `~/Developer/cusco/docs/design.md`
+- `~/Developer/eywa/docs/design.md`
 - `~/.grok/` layout, `~/.grok/version.json`, `~/.grok/bin/{grok,agent}` symlinks,
   `~/.grok/downloads/grok-1.0.89-macos-aarch64` (`--version`, `--help`, `leader --help`,
   `agent --help`, `strings`), and `~/.grok/logs/unified.jsonl` (keys only).
