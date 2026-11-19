@@ -41,9 +41,8 @@ pub struct Config {
     pub dir: PathBuf,
     pub stale_after: Millis,
     pub subscriber_queue: usize,
-    /// Client name and executable to look for at startup. An executable
-    /// containing `/` matches a full path; otherwise it matches a file name.
-    pub executables: Vec<(&'static str, String)>,
+    /// How to recognize each client's processes when scanning at startup.
+    pub executables: Vec<process::ProcessRule>,
 }
 
 enum Input {
@@ -238,7 +237,7 @@ impl Core {
 
     /// Adds a process node for each running agent process, so its client
     /// shows `unknown` until one of its sessions reports or it exits.
-    fn scan_processes(&mut self, executables: &[(&'static str, String)]) {
+    fn scan_processes(&mut self, executables: &[process::ProcessRule]) {
         let at = now();
         for (client, pid) in process::list_processes(executables) {
             self.tree.apply(
