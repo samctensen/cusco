@@ -210,13 +210,14 @@ startup (see Recovery).
 
 ### Normalized events
 
-Adapters produce five event types. The core knows nothing about any specific
+Adapters produce six event types. The core knows nothing about any specific
 client.
 
 | Event | Effect |
 | --- | --- |
 | `open {node}` | A node appeared. |
 | `close {id, outcome}` | A node ended: `ok`, `error` or `cancelled`. |
+| `end {id}` | A node ended and its outcome isn't known yet. It closes as `close` does; the outcome follows as an `attr`. |
 | `attr {id, attrs}` | A node's attributes changed. |
 | `lost {scope}` | The open nodes in `scope` become unconfirmed. |
 | `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Cusco diffs it against what it has and publishes the changes. |

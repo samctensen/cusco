@@ -86,6 +86,10 @@ pub enum Event {
         id: String,
         outcome: Outcome,
     },
+    /// A node ended and how isn't known yet: it closes with no outcome.
+    End {
+        id: String,
+    },
     Attr {
         id: String,
         attrs: Attrs,
@@ -271,7 +275,13 @@ impl Tree {
                 if let Some(parent) = parent_of(&id) {
                     self.confirm(parent, at);
                 }
-                self.close(&id, outcome, at);
+                self.close(&id, Some(outcome), at);
+            }
+            Event::End { id } => {
+                if let Some(parent) = parent_of(&id) {
+                    self.confirm(parent, at);
+                }
+                self.close(&id, None, at);
             }
             Event::Attr { id, attrs } => {
                 if let Some(node) = self.nodes.get_mut(&id) {
@@ -336,10 +346,14 @@ impl Tree {
             .map(|(path, _)| path.clone())
             .collect();
         for session in &sessions {
-            self.close(session, Outcome::Ok, at);
+            self.close(session, Some(Outcome::Ok), at);
         }
         for client in self.clients.clone() {
-            self.close(&format!("/{}/process:{pid}", client.name), Outcome::Ok, at);
+            self.close(
+                &format!("/{}/process:{pid}", client.name),
+                Some(Outcome::Ok),
+                at,
+            );
         }
         self.prune();
         self.refresh_states(at);
@@ -449,7 +463,9 @@ impl Tree {
         self.confirm(id, at);
     }
 
-    fn close(&mut self, id: &str, outcome: Outcome, at: Millis) {
+    /// Closes a node. A turn closing with an outcome records it on its
+    /// session; with none, the outcome is still to come.
+    fn close(&mut self, id: &str, outcome: Option<Outcome>, at: Millis) {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
@@ -458,12 +474,12 @@ impl Tree {
         }
         let kind = node.kind;
         if kind == Kind::Turn
+            && let Some(outcome) = outcome
             && let Some(session) = parent_of(id).and_then(|path| self.nodes.get_mut(path))
         {
-            session.attrs.insert(
-                "last_turn".into(),
-                serde_json::json!({"outcome": outcome, "ended_at": rfc3339(at)}),
-            );
+            session
+                .attrs
+                .insert("last_turn".into(), last_turn(outcome, at));
         }
         let prefix = format!("{id}/");
         for (path, node) in self.nodes.range_mut(prefix.clone()..) {
@@ -572,6 +588,11 @@ impl Node {
             attrs: Attrs::new(),
         }
     }
+}
+
+/// A session's `last_turn` attribute: how its most recent turn ended, and when.
+pub(crate) fn last_turn(outcome: Outcome, ended_at: Millis) -> serde_json::Value {
+    serde_json::json!({"outcome": outcome, "ended_at": rfc3339(ended_at)})
 }
 
 /// Formats a time as RFC 3339 with milliseconds, the form used on the wire.
