@@ -290,6 +290,10 @@ fn claude_session_file_drives_state() {
         s["rows"][0]["state"] == "needs_input"
     });
 
+    // Back to busy: the approval was answered, which no hook reports.
+    write("busy");
+    wait_for_snapshot(dir.path(), request, |s| s["rows"][0]["state"] == "working");
+
     write("idle");
     let snapshot = wait_for_snapshot(
         dir.path(),
