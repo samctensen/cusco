@@ -22,9 +22,9 @@ const CLIENT: Client = Client {
     },
 };
 
-/// The turn opened for a busy session whose turn no hook has reported yet,
-/// for example because Cusco started mid-turn. The first hook that names the
-/// real turn replaces it.
+/// The turn opened for a busy session whose turn no hook has reported yet:
+/// Cusco started mid-turn, or the registry reported the turn before its
+/// prompt hook did. The first hook that names the real turn renames it.
 const UNREPORTED_TURN: &str = "running";
 
 /// A turn the session registry ended before any hook said how it ended.
@@ -217,14 +217,15 @@ fn waiting_reason(waiting_for: Option<&str>) -> Reason {
 
 fn handle_event(tracker: &mut Tracker, record: &HookRecord, at: Millis, events: &mut Vec<Event>) {
     let turn = record.turn_id.as_deref();
-    // The real turn has been reported: it replaces the placeholder.
+    // The real turn has been reported: the placeholder was that turn all
+    // along, so it takes the real id and nothing ends.
     if record.agent_id.is_none()
-        && turn.is_some_and(|turn| turn != UNREPORTED_TURN)
+        && let Some(turn) = turn
         && tracker
             .root(None)
             .is_some_and(|actor| actor.turn == UNREPORTED_TURN)
     {
-        tracker.end_turn(Some(UNREPORTED_TURN), Outcome::Ok, events);
+        tracker.rename_turn(turn, events);
     }
     let actor = match &record.agent_id {
         Some(agent) => tracker.agent(agent, turn),
