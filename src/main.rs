@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  cusco setup [claude] [codex] [--remove]
+  cusco setup [claude] [codex] [grok] [muse] [--remove]
   cusco serve
   cusco status [--json] [--requests] [--path <path>] [--depth <n>]
   cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
@@ -54,14 +54,14 @@ fn setup(args: &[String]) -> ExitCode {
         .into_iter()
         .filter(|target| {
             if named.is_empty() {
-                target.path.parent().is_some_and(|dir| dir.exists())
+                target.home.exists()
             } else {
                 named.contains(&target.client)
             }
         })
         .collect();
     if chosen.is_empty() {
-        eprintln!("cusco: found no Claude Code or Codex settings to set up");
+        eprintln!("cusco: found no supported agents to set up");
         return ExitCode::FAILURE;
     }
     let executable = match cusco::setup::hook_executable() {
