@@ -128,13 +128,31 @@ Kept few, by behavior:
 - `docs/api.md` and the schema's description: `last_turn` can trail `state` by
   up to two seconds after an interrupt.
 
-## Verify with recorded sessions
+## Checked against real clients
 
-1. Whether Claude writes `idle` before or after its `Stop` hook runs.
-2. Whether the registry shows `idle` mid-turn, for example while a blocked
-   `Stop` continues the turn.
-3. The oldest Claude Code and Grok Build versions that honor `args`. Neither
-   documents one.
+Checked on 18 November 2026 with Claude Code 2.1.301 (the CLI) and 2.1.325 (the
+build bundled with the desktop app). The samples are small.
+
+1. **`args` is honored.** A headless session of each build, given the entry
+   `cusco setup` writes, delivered `SessionStart`, `UserPromptSubmit`, `Stop`
+   and `SessionEnd` records through it. A shell-form hook beside it confirmed
+   that hooks ran.
+2. **`idle` and the `Stop` hook arrive in either order.** Over three turn ends
+   on live desktop sessions, the `Stop` record reached Cusco 19 ms and 18 ms
+   before the registry's `idle`, and once 179 ms after it. In the headless
+   sessions it came first. When `idle` is first, a subscriber sees `idle` with
+   no `last_turn`, then the outcome.
+3. **The registry does go `idle` and back within a moment.** Twice in five
+   minutes a session's status went `idle` and then `busy`, 42 ms and 122 ms
+   apart. Why isn't known. Subscribers now see that as a brief `idle`; the
+   two-second wait used to hide it unless a `Stop` hook had closed the turn.
+4. **At a turn's start the registry's `busy` beat the `UserPromptSubmit`
+   hook** in the headless sessions, by 29 ms and 332 ms. Replacing the
+   `running` placeholder then writes `last_turn: ok` for a turn that has only
+   started. That is older than this change and is not fixed by it.
+
+Still to check: Grok Build, and the oldest version of either client that
+honors `args`.
 
 ## Rollout
 
