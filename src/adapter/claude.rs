@@ -141,11 +141,15 @@ impl Adapter for ClaudeAdapter {
             attrs.insert("surface".into(), claude_surface(entrypoint).into());
         }
         events.push(open(session_path(CLIENT.name, &state.session_id), attrs));
-        if state.status != Status::Idle {
-            // Running again: the idle didn't hold, so its turn has no outcome.
-            self.unsettled.remove(&state.session_id);
-        }
         let tracker = self.sessions.tracker(CLIENT.name, &state.session_id);
+        if state.status != Status::Idle
+            && let Some(unsettled) = self.unsettled.remove(&state.session_id)
+            && let Some(actor) = tracker.root(Some(&unsettled.turn))
+        {
+            // Running again: the idle didn't hold, so the turn it closed is
+            // still the one running and has no outcome.
+            tracker.enter(&actor, &mut events);
+        }
         match &state.status {
             // Busy again after waiting: whatever it waited on was answered.
             Status::Busy => {

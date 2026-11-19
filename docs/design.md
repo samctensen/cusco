@@ -221,7 +221,7 @@ client.
 | --- | --- |
 | `open {node}` | A node appeared. |
 | `close {id, outcome}` | A node ended: `ok`, `error` or `cancelled`. |
-| `end {id}` | A node ended and its outcome isn't known yet. It closes as `close` does; the outcome follows as an `attr`. |
+| `end {id}` | A node ended and its outcome isn't known yet. It closes as `close` does. A turn's `end` clears its session's `last_turn`; the outcome follows as an `attr`. |
 | `attr {id, attrs}` | A node's attributes changed. |
 | `lost {scope}` | The open nodes in `scope` become unconfirmed. |
 | `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Cusco diffs it against what it has and publishes the changes. |
@@ -453,7 +453,7 @@ and applies each status change:
 | --- | --- |
 | `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`, which the first hook naming the real turn replaces. Close any open request: going busy again after waiting means it was answered. |
 | `waiting` | Open a request if none is open, else mark the open ones `prompted`. |
-| `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does. |
+| `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled and the session has no `last_turn`: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does, and then nothing is recorded. |
 
 At startup this states every Claude session at once, with no `unknown`.
 

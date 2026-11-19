@@ -166,14 +166,20 @@ fn idle_closes_the_turn_before_its_outcome_is_known() {
     apply(&mut tree, events, 3_000);
     assert_eq!(last_outcome(&tree, session), "cancelled");
 
-    // Busy again: the idle didn't hold, so nothing is recorded.
+    // Busy again: the idle didn't hold. The turn it closed is the one still
+    // running, and nothing is recorded for it.
     let (mut adapter, mut tree) = interrupted();
     let events = adapter.observe(&registry(Status::Busy), 1_300);
     apply(&mut tree, events, 1_300);
+    assert!(tree.contains("/claude/session:s1/turn:p1"));
+    feed(&mut tree, &mut adapter, &late, 1_350);
     let events = adapter.settle("s1", 3_000);
     apply(&mut tree, events, 3_000);
     assert_eq!(tree.state(session), Some(State::Working));
     assert_eq!(last_turn(&tree), None);
+    // A new prompt then finds that turn interrupted.
+    feed(&mut tree, &mut adapter, &next, 3_500);
+    assert_eq!(last_outcome(&tree, session), "cancelled");
 
     // A session that ends first gets no outcome afterwards.
     let (mut adapter, mut tree) = interrupted();

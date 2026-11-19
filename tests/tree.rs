@@ -78,6 +78,9 @@ fn closing_rules() {
     );
 
     // An end closes like a close but records no outcome: that follows later.
+    // Until it does, the turn before no longer says how the latest one ended.
+    open(&mut t, "/claude/session:s2/turn:p0", 7);
+    close(&mut t, "/claude/session:s2/turn:p0", Outcome::Ok, 7);
     open(&mut t, "/claude/session:s2/turn:p1/request:r1", 7);
     open(&mut t, "/claude/session:s2/turn:p1/agent:a1", 7);
     t.apply(

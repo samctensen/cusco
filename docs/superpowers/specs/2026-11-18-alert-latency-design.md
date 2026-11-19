@@ -70,7 +70,9 @@ that starts before every Claude and Grok hook.
 When Claude's registry says a session went `idle` and a turn is still open:
 
 - The turn closes immediately. As today, the main thread's open requests close
-  with it and its subagents keep running. `last_turn` is not written yet.
+  with it and its subagents keep running. `last_turn` is cleared: the turn
+  before no longer says how the latest one ended, so `idle` with no
+  `last_turn` means the outcome is still to come.
 - For the settle time (still two seconds), the session's turn is *unsettled*:
 
 | What arrives | Effect |
@@ -81,7 +83,7 @@ When Claude's registry says a session went `idle` and a turn is still open:
 | `UserPromptSubmit` with the same turn id | The turn continues: it reopens and nothing is written. |
 | Any other main-thread record | Ignored, so a late tool hook can't reopen the turn. |
 | A subagent's record | Handled as usual. |
-| The registry says `busy` or `waiting` | The idle didn't hold. Nothing is written, and the registry is handled as today. |
+| The registry says `busy` or `waiting` | The idle didn't hold: the turn reopens and nothing is written. |
 | Nothing, for the settle time | `last_turn` is `cancelled`. |
 
 `last_turn.ended_at` is when the registry went idle, whichever row decides the

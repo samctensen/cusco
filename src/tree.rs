@@ -86,7 +86,8 @@ pub enum Event {
         id: String,
         outcome: Outcome,
     },
-    /// A node ended and how isn't known yet: it closes with no outcome.
+    /// A node ended and how isn't known yet: it closes with no outcome. For a
+    /// turn that clears the session's `last_turn` until the outcome follows.
     End {
         id: String,
     },
@@ -464,7 +465,8 @@ impl Tree {
     }
 
     /// Closes a node. A turn closing with an outcome records it on its
-    /// session; with none, the outcome is still to come.
+    /// session as `last_turn`; with none, the outcome is still to come and
+    /// `last_turn` is cleared until it arrives.
     fn close(&mut self, id: &str, outcome: Option<Outcome>, at: Millis) {
         let Some(node) = self.nodes.get(id) else {
             return;
@@ -474,12 +476,19 @@ impl Tree {
         }
         let kind = node.kind;
         if kind == Kind::Turn
-            && let Some(outcome) = outcome
             && let Some(session) = parent_of(id).and_then(|path| self.nodes.get_mut(path))
         {
-            session
-                .attrs
-                .insert("last_turn".into(), last_turn(outcome, at));
+            match outcome {
+                Some(outcome) => {
+                    session
+                        .attrs
+                        .insert("last_turn".into(), last_turn(outcome, at));
+                }
+                // The turn before no longer says how the latest one ended.
+                None => {
+                    session.attrs.shift_remove("last_turn");
+                }
+            }
         }
         let prefix = format!("{id}/");
         for (path, node) in self.nodes.range_mut(prefix.clone()..) {
