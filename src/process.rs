@@ -38,22 +38,108 @@ pub fn parent_pid(pid: u32) -> Option<u32> {
     (written == size).then_some(info.pbi_ppid)
 }
 
-/// Resolves symbolic links in a full-path executable, because the kernel
-/// reports resolved paths (`/tmp/x` runs as `/private/tmp/x`). A bare name
-/// is returned unchanged.
-fn resolve_executable(executable: &str) -> String {
-    if !executable.contains('/') {
-        return executable.to_string();
-    }
-    std::fs::canonicalize(executable)
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| executable.to_string())
+/// How Cusco recognizes a client's processes.
+#[derive(Clone, Debug)]
+pub struct ProcessRule {
+    pub client: &'static str,
+    /// An exact file name, a file-name prefix ending in `*`, or a full path.
+    pub executable: String,
+    pub hosting: Hosting,
 }
 
-/// The name a process was launched as: its `argv[0]`. Unlike the executable
-/// path, it keeps the name of a symbolic link the process was started
-/// through, such as `~/.local/bin/claude` for `…/claude/versions/2.1.301`.
-pub fn launch_name(pid: u32) -> Option<String> {
+/// Whether a client's process runs one session or hosts many.
+#[derive(Clone, Copy, Debug)]
+pub enum Hosting {
+    /// One session per process, so a running process that hasn't reported
+    /// is an unconfirmed session.
+    Session,
+    /// Every process hosts many sessions.
+    Host,
+    /// Hosts many sessions when launched with any of these arguments.
+    HostWhen(&'static [&'static str]),
+}
+
+impl ProcessRule {
+    pub fn new(
+        client: &'static str,
+        executable: impl Into<String>,
+        hosting: Hosting,
+    ) -> ProcessRule {
+        ProcessRule {
+            client,
+            executable: executable.into(),
+            hosting,
+        }
+    }
+
+    /// The rules for the clients Cusco supports. See `docs/research/`.
+    pub fn defaults() -> Vec<ProcessRule> {
+        vec![
+            ProcessRule::new("claude", "claude", Hosting::Session),
+            // The CLI and the desktop app both run hooks from the shared app server.
+            ProcessRule::new("codex", "codex", Hosting::Host),
+            ProcessRule::new("grok", "grok", Hosting::HostWhen(&["agent"])),
+            // A launcher script runs `muse-bin-<version>`.
+            ProcessRule::new("muse", "muse-bin-*", Hosting::HostWhen(&["serve", "acp"])),
+        ]
+    }
+
+    pub fn for_client(client: &str) -> Option<ProcessRule> {
+        ProcessRule::defaults()
+            .into_iter()
+            .find(|rule| rule.client == client)
+    }
+
+    /// The rule with symbolic links resolved in a full-path executable,
+    /// because the kernel reports resolved paths (`/tmp/x` runs as
+    /// `/private/tmp/x`).
+    fn resolved(&self) -> ProcessRule {
+        let mut rule = self.clone();
+        if rule.executable.contains('/')
+            && let Ok(path) = std::fs::canonicalize(&rule.executable)
+        {
+            rule.executable = path.to_string_lossy().into_owned();
+        }
+        rule
+    }
+
+    /// Whether process `pid`, running `path`, belongs to this client. A name
+    /// also matches the name the process was launched as, for installs that
+    /// run a versioned binary through a symbolic link.
+    fn matches(&self, pid: u32, path: &Path) -> bool {
+        if self.executable.contains('/') {
+            return path == Path::new(&self.executable);
+        }
+        let named = |path: &Path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .is_some_and(|name| name_matches(name, &self.executable))
+        };
+        named(path) || launch_name(pid).is_some_and(|name| named(Path::new(&name)))
+    }
+
+    fn hosts(&self, pid: u32) -> bool {
+        match self.hosting {
+            Hosting::Session => false,
+            Hosting::Host => true,
+            Hosting::HostWhen(markers) => arguments(pid).is_some_and(|args| {
+                args.iter()
+                    .skip(1)
+                    .any(|arg| markers.contains(&arg.as_str()))
+            }),
+        }
+    }
+}
+
+fn name_matches(name: &str, pattern: &str) -> bool {
+    match pattern.strip_suffix('*') {
+        Some(prefix) => name.starts_with(prefix),
+        None => name == pattern,
+    }
+}
+
+/// A process's arguments, `argv[0]` first.
+pub fn arguments(pid: u32) -> Option<Vec<String>> {
     let mut argmax: c_int = 0;
     let mut size = std::mem::size_of::<c_int>();
     let mut name = [libc::CTL_KERN, libc::KERN_ARGMAX];
@@ -88,43 +174,37 @@ pub fn launch_name(pid: u32) -> Option<String> {
     if read != 0 {
         return None;
     }
-    // Layout: argc, the executable path, NUL padding, then argv[0].
+    // Layout: argc, the executable path, NUL padding, then argc strings.
+    let count_bytes = buffer.get(..std::mem::size_of::<c_int>())?;
+    let count = c_int::from_ne_bytes(count_bytes.try_into().ok()?);
     let after_argc = buffer.get(std::mem::size_of::<c_int>()..size)?;
     let after_path = &after_argc[after_argc.iter().position(|byte| *byte == 0)?..];
-    let argv0 = &after_path[after_path.iter().position(|byte| *byte != 0)?..];
-    let end = argv0
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(argv0.len());
-    Some(String::from_utf8_lossy(&argv0[..end]).into_owned())
-}
-
-/// Whether an executable path matches a resolved executable: by file name,
-/// or by full path when it contains a `/`.
-fn matches_executable(path: &Path, executable: &str) -> bool {
-    if executable.contains('/') {
-        path == Path::new(executable)
-    } else {
-        path.file_name() == Some(OsStr::new(executable))
+    let mut rest = &after_path[after_path.iter().position(|byte| *byte != 0)?..];
+    let mut args = Vec::new();
+    for _ in 0..count.max(0) {
+        let end = rest
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(rest.len());
+        args.push(String::from_utf8_lossy(&rest[..end]).into_owned());
+        rest = rest.get(end + 1..).unwrap_or_default();
     }
+    Some(args)
 }
 
-/// Whether process `pid` runs `executable`. A bare name also matches the
-/// name the process was launched as, for installs that run a versioned
-/// binary through a symbolic link.
-fn process_matches(pid: u32, path: &Path, executable: &str) -> bool {
-    matches_executable(path, executable)
-        || (!executable.contains('/')
-            && launch_name(pid)
-                .is_some_and(|name| Path::new(&name).file_name() == Some(OsStr::new(executable))))
+/// The name a process was launched as: its `argv[0]`. Unlike the executable
+/// path, it keeps the name of a symbolic link the process was started
+/// through, such as `~/.local/bin/claude` for `…/claude/versions/2.1.301`.
+pub fn launch_name(pid: u32) -> Option<String> {
+    arguments(pid)?.into_iter().next()
 }
 
-/// The nearest process at or above `start` running `executable`.
-pub fn find_ancestor(start: u32, executable: &str) -> Option<u32> {
-    let executable = resolve_executable(executable);
+/// The nearest process at or above `start` that belongs to the rule's client.
+pub fn find_ancestor(start: u32, rule: &ProcessRule) -> Option<u32> {
+    let rule = rule.resolved();
     let mut pid = start;
     while pid > 1 {
-        if executable_path(pid).is_some_and(|path| process_matches(pid, &path, &executable)) {
+        if executable_path(pid).is_some_and(|path| rule.matches(pid, &path)) {
             return Some(pid);
         }
         pid = parent_pid(pid)?;
@@ -145,9 +225,10 @@ pub fn surface(pid: u32) -> &'static str {
     }
 }
 
-/// Running processes whose executable matches one of `executables`, using
-/// the same rule as `find_ancestor`.
-pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static str, u32)> {
+/// Running processes that each run one session of a client: the processes
+/// that, if they haven't reported, stand for an unconfirmed session. Hosts
+/// and supervisors are left out.
+pub fn list_processes(rules: &[ProcessRule]) -> Vec<(&'static str, u32)> {
     // SAFETY: a null buffer asks only for the number of processes.
     let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
     if count <= 0 {
@@ -162,27 +243,22 @@ pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static s
         return Vec::new();
     }
     pids.truncate(listed as usize);
-    let executables: Vec<(&'static str, String)> = executables
-        .iter()
-        .map(|(client, executable)| (*client, resolve_executable(executable)))
-        .collect();
-    let matches = pids
+    let rules: Vec<ProcessRule> = rules.iter().map(ProcessRule::resolved).collect();
+    let matches: Vec<(&'static str, u32, bool)> = pids
         .into_iter()
         .filter(|pid| *pid > 1)
         .filter_map(|pid| {
             let pid = pid as u32;
             let path = executable_path(pid)?;
-            executables
-                .iter()
-                .find(|(_, executable)| process_matches(pid, &path, executable))
-                .map(|(client, _)| (*client, pid))
+            let rule = rules.iter().find(|rule| rule.matches(pid, &path))?;
+            Some((rule.client, pid, rule.hosts(pid)))
         })
-        .collect::<Vec<_>>();
+        .collect();
     // Hooks claim the nearest matching ancestor, so a match that is itself
     // an ancestor of another match (a supervisor) would never be claimed.
     let supervisors: std::collections::HashSet<(&'static str, u32)> = matches
         .iter()
-        .flat_map(|(client, pid)| {
+        .flat_map(|(client, pid, _)| {
             ancestors(*pid)
                 .into_iter()
                 .map(move |above| (*client, above))
@@ -190,7 +266,8 @@ pub fn list_processes(executables: &[(&'static str, String)]) -> Vec<(&'static s
         .collect();
     matches
         .into_iter()
-        .filter(|found| !supervisors.contains(found))
+        .filter(|(client, pid, host)| !host && !supervisors.contains(&(*client, *pid)))
+        .map(|(client, pid, _)| (client, pid))
         .collect()
 }
 

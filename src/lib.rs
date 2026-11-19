@@ -6,6 +6,7 @@ pub mod api;
 pub mod hook;
 pub mod process;
 pub mod record;
+pub mod registry;
 pub mod row;
 pub mod server;
 pub mod setup;

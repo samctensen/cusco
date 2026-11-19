@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use cusco::tree::{Client, Event, Millis, Outcome, STALE_AFTER, Tree};
+use cusco::tree::{
+    Attribution, Client, Detection, Event, Millis, Observes, Outcome, STALE_AFTER, Tree,
+};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -13,7 +15,13 @@ pub const WAIT: Duration = Duration::from_secs(5);
 
 pub const CLAUDE: Client = Client {
     name: "claude",
-    observes: &["session", "turn", "agent", "request"],
+    observes: Observes {
+        agents: true,
+        approvals: Attribution::Actor,
+        questions: true,
+        mcp_input: true,
+        interrupts: Detection::Inferred,
+    },
 };
 
 pub fn tree() -> Tree {
@@ -77,6 +85,7 @@ pub fn config(dir: &Path) -> cusco::server::Config {
         stale_after: 2_000,
         subscriber_queue: 256,
         executables: Vec::new(),
+        claude_sessions: None,
     }
 }
 

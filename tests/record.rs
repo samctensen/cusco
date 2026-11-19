@@ -32,6 +32,55 @@ fn only_allowed_fields_leave_the_hook() {
     assert_eq!(record.error.as_deref(), Some("rate_limit"));
 }
 
+/// Each client's payload and environment map into the same record shape.
+#[test]
+fn every_client_maps_into_one_shape() {
+    let env = |vars: &'static [(&'static str, &'static str)]| {
+        move |name: &str| {
+            vars.iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        }
+    };
+
+    let claude = json!({"hook_event_name": "PostToolBatch", "session_id": "s1",
+                        "tool_calls": [{"tool_use_id": "tu1"}, "tu2"]});
+    let claude_env = env(&[
+        ("CLAUDE_PID", "4242"),
+        ("CLAUDE_CODE_ENTRYPOINT", "claude-desktop"),
+    ]);
+    let record = HookRecord::from_hook("claude", &claude, &claude_env).unwrap();
+    assert_eq!(record.tool_use_ids, Some(vec!["tu1".into(), "tu2".into()]));
+    assert_eq!(
+        (record.pid, record.surface.as_deref()),
+        (Some(4242), Some("desktop"))
+    );
+
+    // Grok: camelCase fields, snake_case event names, subagent id on lifecycle events.
+    let grok = json!({"hookEventName": "subagent_start", "sessionId": "root", "subagentId": "child",
+                      "subagentType": "explore", "timestamp": "2026-11-18T20:00:00Z"});
+    let record = HookRecord::from_payload("grok", &grok).unwrap();
+    assert_eq!(record.event, "SubagentStart");
+    assert_eq!(record.session_id, "root");
+    assert_eq!(record.agent_id.as_deref(), Some("child"));
+    assert!(record.timestamp.is_some());
+
+    // Muse: the root session and the acting thread come from the environment.
+    let muse = json!({"hook_event_name": "PreToolUse", "session_id": "thread-2", "turn_id": "t1"});
+    let muse_env = env(&[("MUSE_SESSION_ID", "root"), ("MUSE_THREAD_ID", "thread-2")]);
+    let record = HookRecord::from_hook("muse", &muse, &muse_env).unwrap();
+    assert_eq!(record.session_id, "root");
+    assert_eq!(record.agent_id.as_deref(), Some("thread-2"));
+
+    // Codex adds a justification to shell input only when asking for approval.
+    let asked = json!({"hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "shell",
+                       "tool_input": {"command": "ls", "description": "needs network"}});
+    let ran = json!({"hook_event_name": "PreToolUse", "session_id": "s1", "tool_name": "shell",
+                     "tool_input": {"command": "ls"}});
+    let digest = |payload| HookRecord::from_payload("codex", &payload).unwrap().digest;
+    assert_eq!(digest(asked), digest(ran));
+}
+
 #[test]
 fn digest_ignores_key_order() {
     let a: serde_json::Value = serde_json::from_str(r#"{"a":1,"b":2}"#).unwrap();
