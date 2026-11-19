@@ -104,6 +104,22 @@ fn closing_rules() {
             .get("last_turn")
             .is_none()
     );
+
+    // A retraction closes the same way and says nothing about any outcome.
+    open(&mut t, "/claude/session:s3/turn:p0", 9);
+    close(&mut t, "/claude/session:s3/turn:p0", Outcome::Cancelled, 9);
+    open(&mut t, "/claude/session:s3/turn:running/request:r1", 10);
+    t.apply(
+        Event::Retract {
+            id: "/claude/session:s3/turn:running".into(),
+        },
+        11,
+    );
+    assert_eq!(t.state("/claude/session:s3"), Some(State::Idle));
+    assert_eq!(
+        t.attrs("/claude/session:s3").unwrap()["last_turn"]["outcome"],
+        "cancelled"
+    );
 }
 
 #[test]

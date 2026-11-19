@@ -91,6 +91,12 @@ pub enum Event {
     End {
         id: String,
     },
+    /// A node closes without having ended: it stood in for another node, or
+    /// only what is beneath it is running. Nothing is recorded, so a turn's
+    /// retraction leaves the session's `last_turn` as it was.
+    Retract {
+        id: String,
+    },
     Attr {
         id: String,
         attrs: Attrs,
@@ -284,6 +290,12 @@ impl Tree {
                 }
                 self.close(&id, None, at);
             }
+            Event::Retract { id } => {
+                if let Some(parent) = parent_of(&id) {
+                    self.confirm(parent, at);
+                }
+                self.retract(&id);
+            }
             Event::Attr { id, attrs } => {
                 if let Some(node) = self.nodes.get_mut(&id) {
                     node.attrs.extend(attrs);
@@ -468,28 +480,33 @@ impl Tree {
     /// session as `last_turn`; with none, the outcome is still to come and
     /// `last_turn` is cleared until it arrives.
     fn close(&mut self, id: &str, outcome: Option<Outcome>, at: Millis) {
-        let Some(node) = self.nodes.get(id) else {
+        if self.retract(id) != Some(Kind::Turn) {
+            return;
+        }
+        let Some(session) = parent_of(id).and_then(|path| self.nodes.get_mut(path)) else {
             return;
         };
-        if !node.open || matches!(node.kind, Kind::Machine | Kind::Client) {
-            return;
-        }
-        let kind = node.kind;
-        if kind == Kind::Turn
-            && let Some(session) = parent_of(id).and_then(|path| self.nodes.get_mut(path))
-        {
-            match outcome {
-                Some(outcome) => {
-                    session
-                        .attrs
-                        .insert("last_turn".into(), last_turn(outcome, at));
-                }
-                // The turn before no longer says how the latest one ended.
-                None => {
-                    session.attrs.shift_remove("last_turn");
-                }
+        match outcome {
+            Some(outcome) => {
+                session
+                    .attrs
+                    .insert("last_turn".into(), last_turn(outcome, at));
+            }
+            // The turn before no longer says how the latest one ended.
+            None => {
+                session.attrs.shift_remove("last_turn");
             }
         }
+    }
+
+    /// Closes a node and records nothing about how it ended. Returns the
+    /// node's kind if it was open.
+    fn retract(&mut self, id: &str) -> Option<Kind> {
+        let node = self.nodes.get(id)?;
+        if !node.open || matches!(node.kind, Kind::Machine | Kind::Client) {
+            return None;
+        }
+        let kind = node.kind;
         let prefix = format!("{id}/");
         for (path, node) in self.nodes.range_mut(prefix.clone()..) {
             if !path.starts_with(&prefix) {
@@ -503,6 +520,7 @@ impl Tree {
         if let Some(node) = self.nodes.get_mut(id) {
             node.open = false;
         }
+        Some(kind)
     }
 
     /// Removes closed nodes that have nothing open beneath them.

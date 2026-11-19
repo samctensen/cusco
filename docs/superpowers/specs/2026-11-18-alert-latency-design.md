@@ -131,12 +131,13 @@ Kept few, by behavior:
 ## Checked against real clients
 
 Checked on 18 November 2026 with Claude Code 2.1.301 (the CLI) and 2.1.325 (the
-build bundled with the desktop app). The samples are small.
+build bundled with the desktop app), and Grok Build 1.0.89. The samples are
+small.
 
-1. **`args` is honored.** A headless session of each build, given the entry
-   `cusco setup` writes, delivered `SessionStart`, `UserPromptSubmit`, `Stop`
-   and `SessionEnd` records through it. A shell-form hook beside it confirmed
-   that hooks ran.
+1. **`args` is honored.** A headless session of each Claude Code build and of
+   Grok Build, given the entry `cusco setup` writes for it, delivered
+   `SessionStart`, `UserPromptSubmit`, `Stop` and `SessionEnd` records through
+   it. A shell-form hook beside it confirmed that hooks ran.
 2. **`idle` and the `Stop` hook arrive in either order.** Over three turn ends
    on live desktop sessions, the `Stop` record reached Cusco 19 ms and 18 ms
    before the registry's `idle`, and once 179 ms after it. In the headless
@@ -151,8 +152,7 @@ build bundled with the desktop app). The samples are small.
    `running` placeholder then writes `last_turn: ok` for a turn that has only
    started. That is older than this change and is not fixed by it.
 
-Still to check: Grok Build, and the oldest version of either client that
-honors `args`.
+Still to check: the oldest version of either client that honors `args`.
 
 ## Rollout
 

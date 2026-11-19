@@ -214,7 +214,7 @@ startup (see Recovery).
 
 ### Normalized events
 
-Adapters produce six event types. The core knows nothing about any specific
+Adapters produce seven event types. The core knows nothing about any specific
 client.
 
 | Event | Effect |
@@ -222,6 +222,7 @@ client.
 | `open {node}` | A node appeared. |
 | `close {id, outcome}` | A node ended: `ok`, `error` or `cancelled`. |
 | `end {id}` | A node ended and its outcome isn't known yet. It closes as `close` does. A turn's `end` clears its session's `last_turn`; the outcome follows as an `attr`. |
+| `retract {id}` | A node closes without having ended: it stood in for another node, or only what is beneath it is running. It closes as `close` does and leaves its session's `last_turn` as it was. |
 | `attr {id, attrs}` | A node's attributes changed. |
 | `lost {scope}` | The open nodes in `scope` become unconfirmed. |
 | `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Eywa diffs it against what it has and publishes the changes. |
@@ -245,7 +246,9 @@ Every adapter maps its client's events onto one tracker per session:
   means the open turn was interrupted, and it closes as `cancelled`; the same id
   (steering, a repeated prompt) only confirms it.
 - **Subagents** attach to the root turn that started them, whatever turn ids their
-  own events carry, and keep running when that turn ends.
+  own events carry, and keep running when that turn ends. Their activity after
+  that doesn't reopen the turn (it is `retract`ed if opening the subagent brought
+  it back) and says nothing about how it ended.
 - **Tool calls** are remembered per actor (the main thread or a subagent) with
   their input digest.
 - **Requests.** No client puts a call id on its approval request, so an approval
@@ -451,7 +454,7 @@ and applies each status change:
 
 | Status | Effect |
 | --- | --- |
-| `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`, which the first hook naming the real turn replaces. Close any open request: going busy again after waiting means it was answered. |
+| `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`. Eywa may have started mid-turn, or the registry reported a new turn before its `UserPromptSubmit` hook arrived. The first hook naming the real turn renames the placeholder: `open` the real turn, `retract` the placeholder. It is one turn and nothing ended, so `last_turn` still describes the turn before. Close any open request: going busy again after waiting means it was answered. |
 | `waiting` | Open a request if none is open, else mark the open ones `prompted`. |
 | `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled and the session has no `last_turn`: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does, and then nothing is recorded. |
 

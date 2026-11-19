@@ -111,7 +111,8 @@ fn interrupted_turn_is_cancelled() {
 }
 
 /// Claude's registry going idle closes the turn at once. How it ended is
-/// settled afterwards: by the Stop hook, a new prompt, or silence.
+/// settled afterwards: by the Stop hook, a new prompt, or silence. The
+/// registry opening the next turn before its hooks do changes none of that.
 #[test]
 fn idle_closes_the_turn_before_its_outcome_is_known() {
     let session = "/claude/session:s1";
@@ -185,6 +186,36 @@ fn idle_closes_the_turn_before_its_outcome_is_known() {
     let (mut adapter, mut tree) = interrupted();
     feed(&mut tree, &mut adapter, &("SessionEnd", json!({})), 1_400);
     assert!(adapter.settle("s1", 3_000).is_empty());
+
+    // The registry can report the next turn before its prompt hook does. The
+    // placeholder it opens is that same turn, so replacing it with the real
+    // one says nothing about how any turn ended.
+    let (mut adapter, mut tree) = interrupted();
+    let events = adapter.settle("s1", 3_000);
+    apply(&mut tree, events, 3_000);
+    let events = adapter.observe(&registry(Status::Busy), 4_000);
+    apply(&mut tree, events, 4_000);
+    assert!(tree.contains("/claude/session:s1/turn:running"));
+    feed(&mut tree, &mut adapter, &next, 4_030);
+    assert!(tree.contains("/claude/session:s1/turn:p2"));
+    assert!(!tree.contains("/claude/session:s1/turn:running"));
+    assert_eq!(
+        last_turn(&tree),
+        Some(json!({"outcome": "cancelled", "ended_at": "1970-01-01T00:00:01.000Z"}))
+    );
+
+    // The first hook to name a turn can be the one that ends it, as when
+    // Eywa starts mid-turn: the outcome is the real turn's.
+    let mut adapter = ClaudeAdapter::new();
+    let mut tree = Tree::new(&[adapter.client()], STALE_AFTER, 0);
+    let events = adapter.observe(&registry(Status::Busy), 0);
+    apply(&mut tree, events, 0);
+    feed(&mut tree, &mut adapter, &("StopFailure", json!({})), 500);
+    assert_eq!(tree.state(session), Some(State::Idle));
+    assert_eq!(
+        last_turn(&tree),
+        Some(json!({"outcome": "error", "ended_at": "1970-01-01T00:00:00.500Z"}))
+    );
 }
 
 /// A parallel sibling's hook can arrive just after a permission request; a
@@ -260,6 +291,11 @@ fn activity_reopens_what_it_belongs_to() {
     assert!(
         t.contains("/claude/session:s1/turn:p1/agent:a1"),
         "a resumed subagent runs again"
+    );
+    assert_eq!(
+        t.attrs("/claude/session:s1").unwrap()["last_turn"]["ended_at"],
+        "1970-01-01T00:00:03.000Z",
+        "and its turn ended when it did, not when the subagent resumed"
     );
 
     // An ended session stays ended for everything but a new start or prompt.
