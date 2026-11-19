@@ -8,12 +8,18 @@ use super::{
     request_path, session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
-use crate::tree::{Attrs, Client, Event, Millis, Outcome};
+use crate::tree::{Attribution, Attrs, Client, Detection, Event, Millis, Observes, Outcome};
 use std::collections::HashMap;
 
 const CLIENT: Client = Client {
     name: "codex",
-    observes: &["session", "turn", "agent", "request:turn"],
+    observes: Observes {
+        agents: true,
+        approvals: Attribution::Actor,
+        questions: true,
+        mcp_input: false,
+        interrupts: Detection::Hook,
+    },
 };
 
 #[derive(Default)]
