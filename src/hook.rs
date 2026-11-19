@@ -65,12 +65,24 @@ pub fn run_hook(client: &str, input: impl Read, dir: &Path) {
     let Ok(payload) = serde_json::from_slice(&payload) else {
         return;
     };
-    let Ok(mut record) = HookRecord::from_payload(client, &payload) else {
+    // Grok runs Claude Code's hooks too, with Grok's payload.
+    let client = if client == "claude" && std::env::var_os("GROK_HOOK_EVENT").is_some() {
+        "grok"
+    } else {
+        client
+    };
+    let env = |name: &str| std::env::var(name).ok();
+    let Ok(mut record) = HookRecord::from_hook(client, &payload, &env) else {
         return;
     };
-    if let Some(pid) = process::find_ancestor(std::process::id(), client) {
+    if record.pid.is_none()
+        && let Some(rule) = process::ProcessRule::for_client(client)
+        && let Some(pid) = process::find_ancestor(std::process::id(), &rule)
+    {
         record.pid = Some(pid);
-        record.surface = Some(process::surface(pid).to_string());
+        record
+            .surface
+            .get_or_insert_with(|| process::surface(pid).to_string());
     }
     if let Some(path) = std::env::var_os("CUSCO_RECORD") {
         let _ = append_line(Path::new(&path), &record);

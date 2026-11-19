@@ -6,11 +6,12 @@ use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  cusco setup [claude] [codex] [--remove]
+  cusco setup [claude] [codex] [grok] [muse] [--remove]
   cusco serve
   cusco status [--json] [--requests] [--path <path>] [--depth <n>]
   cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
-  cusco hook <claude|codex>
+  cusco visualize
+  cusco hook <claude|codex|grok|muse>
   cusco --version";
 
 fn main() -> ExitCode {
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         Some("serve") if args.len() == 1 => serve(),
         Some("status") => query("get", &args[1..]),
         Some("watch") => query("subscribe", &args[1..]),
+        Some("visualize") if args.len() == 1 => visualize(),
         Some("--version" | "-V") => {
             println!("cusco {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -54,14 +56,14 @@ fn setup(args: &[String]) -> ExitCode {
         .into_iter()
         .filter(|target| {
             if named.is_empty() {
-                target.path.parent().is_some_and(|dir| dir.exists())
+                target.home.exists()
             } else {
                 named.contains(&target.client)
             }
         })
         .collect();
     if chosen.is_empty() {
-        eprintln!("cusco: found no Claude Code or Codex settings to set up");
+        eprintln!("cusco: found no supported agents to set up");
         return ExitCode::FAILURE;
     }
     let executable = match cusco::setup::hook_executable() {
@@ -108,7 +110,8 @@ fn serve() -> ExitCode {
         dir: dir.clone(),
         stale_after: STALE_AFTER,
         subscriber_queue: SUBSCRIBER_QUEUE,
-        executables: vec![("claude", "claude".into()), ("codex", "codex".into())],
+        executables: cusco::process::ProcessRule::defaults(),
+        claude_sessions: Some(cusco::registry::default_dir()),
     };
     match server::serve(config) {
         Ok(server) => {
@@ -129,9 +132,7 @@ fn query(op: &str, flags: &[String]) -> ExitCode {
     let Some(request) = build_request(op, flags) else {
         return usage();
     };
-    let socket = default_dir().join(API_SOCKET);
-    let Ok(mut stream) = UnixStream::connect(&socket) else {
-        eprintln!("cusco is not running: no socket at {}", socket.display());
+    let Some(mut stream) = connect() else {
         return ExitCode::FAILURE;
     };
     if writeln!(stream, "{request}").is_err() {
@@ -155,6 +156,30 @@ fn query(op: &str, flags: &[String]) -> ExitCode {
         }
     }
     code
+}
+
+/// Draws a live view of every agent until Ctrl-C.
+fn visualize() -> ExitCode {
+    let Some(stream) = connect() else {
+        return ExitCode::FAILURE;
+    };
+    match cusco::visualize::run(stream) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("cusco: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Connects to the running service, or says that it isn't running.
+fn connect() -> Option<UnixStream> {
+    let socket = default_dir().join(API_SOCKET);
+    let stream = UnixStream::connect(&socket);
+    if stream.is_err() {
+        eprintln!("cusco is not running: no socket at {}", socket.display());
+    }
+    stream.ok()
 }
 
 fn build_request(op: &str, flags: &[String]) -> Option<Value> {

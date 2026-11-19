@@ -31,7 +31,7 @@ fn get_returns_one_snapshot() {
         .iter()
         .map(|row| row["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["/", "/claude", "/codex"]);
+    assert_eq!(ids, ["/", "/claude", "/codex", "/grok", "/muse"]);
     let mut rest = String::new();
     assert_eq!(
         std::io::BufRead::read_line(&mut reader, &mut rest).unwrap(),
@@ -194,32 +194,56 @@ fn command_line() {
 #[test]
 fn setup_adds_and_removes_hooks() {
     let dir = temp_dir("setup");
-    let claude = dir.path().join("claude");
-    let codex = dir.path().join("codex");
-    std::fs::create_dir_all(&claude).unwrap();
-    std::fs::create_dir_all(&codex).unwrap();
+    let [claude, codex, grok, config] = ["claude", "codex", "grok", "config"].map(|name| {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    });
+    std::fs::create_dir_all(config.join("muse")).unwrap();
     let settings = claude.join("settings.json");
     let original = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\"\n          }\n        ]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
     std::fs::write(&settings, original).unwrap();
+    // Codex trusts hooks by position: an existing Cusco hook between two
+    // other hooks must stay where it is.
+    let group = |command: &str| json!({"hooks": [{"type": "command", "command": command}]});
+    let codex_hooks = codex.join("hooks.json");
+    let stop = json!([
+        group("first"),
+        group("/old/path/cusco hook codex"),
+        group("last")
+    ]);
+    std::fs::write(&codex_hooks, json!({"hooks": {"Stop": stop}}).to_string()).unwrap();
     let envs = [
         ("CLAUDE_CONFIG_DIR", claude.as_path()),
         ("CODEX_HOME", codex.as_path()),
+        ("GROK_HOME", grok.as_path()),
+        ("XDG_CONFIG_HOME", config.as_path()),
     ];
     let setup = |args: &[&str]| run_cusco_env(args, dir.path(), &envs, "");
+    let read = |path: &std::path::Path| -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    };
 
     assert!(setup(&["setup"]).status.success());
     let added = std::fs::read_to_string(&settings).unwrap();
-    let parsed: serde_json::Value = serde_json::from_str(&added).unwrap();
+    let parsed = read(&settings);
     let keys: Vec<_> = parsed.as_object().unwrap().keys().cloned().collect();
     assert_eq!(keys, ["theme", "hooks", "model"], "key order is kept");
     assert_eq!(parsed["hooks"]["Stop"].as_array().unwrap().len(), 2);
+    let command =
+        |value: &serde_json::Value| value["hooks"][0]["command"].as_str().unwrap().to_string();
+    assert!(command(&parsed["hooks"]["PermissionRequest"][0]).ends_with("cusco hook claude"));
+    let stop = read(&codex_hooks)["hooks"]["Stop"].clone();
+    assert_eq!(command(&stop[0]), "first");
     assert!(
-        parsed["hooks"]["PermissionRequest"][0]["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .ends_with("cusco hook claude")
+        command(&stop[1]).ends_with("cusco hook codex") && !command(&stop[1]).starts_with("/old")
     );
-    assert!(codex.join("hooks.json").exists());
+    assert_eq!(command(&stop[2]), "last");
+    assert!(read(&grok.join("hooks/cusco.json"))["hooks"]["StopCancelled"].is_array());
+    assert_eq!(
+        read(&config.join("muse/settings.json"))["schema_version"],
+        1
+    );
 
     assert!(setup(&["setup"]).status.success());
     assert_eq!(
@@ -229,10 +253,145 @@ fn setup_adds_and_removes_hooks() {
     );
 
     assert!(setup(&["setup", "--remove"]).status.success());
-    let removed: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
     assert_eq!(
-        removed,
+        read(&settings),
         serde_json::from_str::<serde_json::Value>(original).unwrap()
     );
+    assert!(
+        !grok.join("hooks/cusco.json").exists(),
+        "Cusco's own file goes"
+    );
+}
+
+/// Claude's per-process session file states what hooks can only imply, and
+/// when. Claude rewrites it in place; going idle with a turn open means an
+/// interrupt.
+#[test]
+fn claude_session_file_drives_state() {
+    let dir = temp_dir("registry");
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let file = sessions.join(format!("{}.json", std::process::id()));
+    let write = |status: &str| {
+        let state = json!({"pid": std::process::id(), "sessionId": "s1", "status": status,
+                           "statusUpdatedAt": 1_795_000_000_000u64,
+                           "cwd": "/repo", "entrypoint": "cli"});
+        std::fs::write(&file, state.to_string()).unwrap();
+    };
+    write("busy");
+    let _service = cusco::server::serve(cusco::server::Config {
+        claude_sessions: Some(sessions.clone()),
+        ..config(dir.path())
+    })
+    .unwrap();
+    let request = r#"{"v":1,"op":"get","path":"/claude","depth":0}"#;
+    wait_for_snapshot(dir.path(), request, |s| s["rows"][0]["state"] == "working");
+
+    write("waiting");
+    wait_for_snapshot(dir.path(), request, |s| {
+        s["rows"][0]["state"] == "needs_input"
+    });
+
+    // Back to busy: the approval was answered, which no hook reports.
+    write("busy");
+    wait_for_snapshot(dir.path(), request, |s| s["rows"][0]["state"] == "working");
+
+    write("idle");
+    let snapshot = wait_for_snapshot(
+        dir.path(),
+        r#"{"v":1,"op":"get","path":"/claude/session:s1","depth":0}"#,
+        |s| s["rows"][0]["state"] == "idle",
+    );
+    assert_eq!(
+        snapshot["rows"][0]["attrs"]["last_turn"]["outcome"],
+        "cancelled"
+    );
+    // The file says when the status changed, which can be before Cusco looked.
+    assert_eq!(snapshot["rows"][0]["since"], "2026-11-18T11:06:40.000Z");
+}
+
+/// The live view lists each client's sessions, the one that needs you first
+/// and then the latest, and expands sessions at work down to the request
+/// that's waiting.
+#[test]
+fn visualize_draws_the_tree() {
+    let row = |id: &str, kind: &str, state: &str, attrs: serde_json::Value| {
+        let row = json!({"id": id, "kind": kind, "state": state,
+                         "since": "2026-11-18T20:00:00.000Z", "attrs": attrs});
+        (id.to_string(), row)
+    };
+    let counts = json!({"sessions": 2, "needs_input": 1, "working": 0, "unknown": 0, "idle": 1});
+    let mut machine = row("/", "machine", "needs_input", json!({}));
+    machine.1["counts"] = counts;
+    let mut rows = [
+        machine,
+        row("/claude", "client", "needs_input", json!({})),
+        row(
+            "/claude/session:s2",
+            "session",
+            "idle",
+            json!({"cwd": "/src/ago\u{7}ra"}),
+        ),
+        row("/claude/session:s2/turn:old", "turn", "idle", json!({})),
+        row(
+            "/claude/session:s9",
+            "session",
+            "needs_input",
+            json!({"cwd": "/src/cusco"}),
+        ),
+        row(
+            "/claude/session:s9/turn:p1",
+            "turn",
+            "needs_input",
+            json!({}),
+        ),
+        row(
+            "/claude/session:s9/turn:p1/request:t9",
+            "request",
+            "needs_input",
+            json!({"reason": "approval"}),
+        ),
+        row(
+            "/claude/session:s5",
+            "session",
+            "idle",
+            json!({"cwd": "/src/lander"}),
+        ),
+        row("/codex", "client", "idle", json!({})),
+    ]
+    .into_iter()
+    .collect::<cusco::visualize::Rows>();
+    rows.get_mut("/claude/session:s5").unwrap()["since"] = json!("2026-11-18T20:01:00.000Z");
+    let now = humantime::parse_rfc3339("2026-11-18T20:02:05Z").unwrap();
+    let now = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let screen = cusco::visualize::render(&rows, now, 60);
+    let mut plain = String::new();
+    let mut escape = false;
+    for c in screen.chars() {
+        match (escape, c) {
+            (false, '\x1b') => escape = true,
+            (true, 'm') => escape = false,
+            (false, c) => plain.push(c),
+            _ => {}
+        }
+    }
+    let lines: Vec<&str> = plain.lines().collect();
+    let line = |text: &str| lines.iter().position(|line| line.contains(text)).unwrap();
+    assert!(lines[line("cusco ·")].contains("2 sessions"), "{plain}");
+    assert!(
+        lines[line("cusco s9")].contains("needs you 2m 05s"),
+        "{plain}"
+    );
+    assert!(line("cusco s9") < line("approval") && line("approval") < line("lander"));
+    assert!(
+        line("lander") < line("agora"),
+        "the latest chats come first"
+    );
+    assert!(!plain.contains("turn old"), "idle sessions stay collapsed");
+    assert!(lines[line("codex")].contains("no sessions"));
+    assert!(lines.iter().all(|line| line.chars().count() <= 60));
 }
