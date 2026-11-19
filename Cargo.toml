@@ -1,5 +1,5 @@
 [package]
-name = "cusco"
+name = "eywa"
 version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
@@ -11,7 +11,7 @@ publish = false
 path = "src/lib.rs"
 
 [[bin]]
-name = "cusco"
+name = "eywa"
 path = "src/main.rs"
 
 [dependencies]

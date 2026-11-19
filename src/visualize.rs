@@ -1,4 +1,4 @@
-//! `cusco visualize`: a live view of every agent Cusco can see, redrawn in the
+//! `eywa visualize`: a live view of every agent Eywa can see, redrawn in the
 //! terminal as it changes.
 
 use crate::tree::Millis;
@@ -179,7 +179,7 @@ impl<'a> View<'a> {
     }
 
     fn header(&self) -> Line {
-        let line = Line::default().add(BOLD, "  cusco");
+        let line = Line::default().add(BOLD, "  eywa");
         let Some(machine) = self.rows.get("/") else {
             return line.add(DIM, " · connecting…");
         };

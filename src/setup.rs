@@ -1,4 +1,4 @@
-//! `cusco setup`: adds Cusco's hook to each client's settings, or removes it.
+//! `eywa setup`: adds Eywa's hook to each client's settings, or removes it.
 //! Other settings and other tools' hooks are left exactly as they were.
 
 use crate::record::{CLAUDE_EVENTS, CODEX_EVENTS, GROK_EVENTS, MUSE_EVENTS};
@@ -56,10 +56,10 @@ pub fn targets() -> Vec<Target> {
             events: CODEX_EVENTS,
             seed: empty,
         },
-        // Grok reads every file in its hooks folder, so Cusco gets its own.
+        // Grok reads every file in its hooks folder, so Eywa gets its own.
         Target {
             client: "grok",
-            path: grok.join("hooks").join("cusco.json"),
+            path: grok.join("hooks").join("eywa.json"),
             home: grok,
             exec: true,
             events: GROK_EVENTS,
@@ -76,15 +76,15 @@ pub fn targets() -> Vec<Target> {
     ]
 }
 
-/// The path hooks and the launchd job run Cusco by. A Homebrew install runs
+/// The path hooks and the launchd job run Eywa by. A Homebrew install runs
 /// from a versioned Cellar directory, so they use the stable link in the
 /// prefix's `bin` instead: upgrades then keep working, and Codex keeps
 /// trusting the hooks.
 pub fn stable_executable() -> io::Result<PathBuf> {
     let executable = std::env::current_exe()?;
     let text = executable.to_string_lossy();
-    if let Some(index) = text.find("/Cellar/cusco/") {
-        let linked = Path::new(&text[..index]).join("bin/cusco");
+    if let Some(index) = text.find("/Cellar/eywa/") {
+        let linked = Path::new(&text[..index]).join("bin/eywa");
         if linked.exists() {
             return Ok(linked);
         }
@@ -106,7 +106,7 @@ pub fn hook_command(executable: &Path, client: &str) -> String {
 }
 
 /// Adds the hook to every event the client supports, or with `remove` takes
-/// Cusco's hooks out. A Cusco hook already present is updated where it sits:
+/// Eywa's hooks out. An Eywa hook already present is updated where it sits:
 /// Codex trusts hooks by their position, so moving one would untrust the
 /// hooks after it.
 pub fn apply(target: &Target, executable: &Path, remove: bool) -> io::Result<Outcome> {
@@ -142,13 +142,13 @@ pub fn apply(target: &Target, executable: &Path, remove: bool) -> io::Result<Out
             format!("\"hooks\" in {} is not an object", target.path.display()),
         ));
     };
-    remove_cusco_hooks(hooks, |event| remove || !target.events.contains(&event));
+    remove_eywa_hooks(hooks, |event| remove || !target.events.contains(&event));
     if !remove {
         let entry = hook_entry(executable, target.client, target.exec);
         for event in target.events {
             let groups = hooks.entry(*event).or_insert_with(|| json!([]));
             if let Some(groups) = groups.as_array_mut()
-                && !update_cusco_hook(groups, &entry)
+                && !update_eywa_hook(groups, &entry)
             {
                 groups.push(json!({"hooks": [entry]}));
             }
@@ -157,7 +157,7 @@ pub fn apply(target: &Target, executable: &Path, remove: bool) -> io::Result<Out
     if hooks.is_empty() {
         root.remove("hooks");
     }
-    // A file left with nothing in it was Cusco's alone.
+    // A file left with nothing in it was Eywa's alone.
     if remove && root.is_empty() {
         std::fs::remove_file(&target.path)?;
         return Ok(Outcome::Removed);
@@ -173,7 +173,7 @@ pub fn apply(target: &Target, executable: &Path, remove: bool) -> io::Result<Out
     {
         std::fs::create_dir_all(parent)?;
     }
-    let staging = target.path.with_extension("json.cusco-tmp");
+    let staging = target.path.with_extension("json.eywa-tmp");
     std::fs::write(&staging, text)?;
     std::fs::rename(&staging, &target.path)?;
     Ok(if remove {
@@ -199,16 +199,16 @@ pub fn hook_entry(executable: &Path, client: &str, exec: bool) -> Value {
     }
 }
 
-/// Replaces the event's first Cusco hook with `entry`, in place, and drops
+/// Replaces the event's first Eywa hook with `entry`, in place, and drops
 /// any duplicates. Returns whether there was one.
-fn update_cusco_hook(groups: &mut Vec<Value>, entry: &Value) -> bool {
+fn update_eywa_hook(groups: &mut Vec<Value>, entry: &Value) -> bool {
     let mut found = false;
     for group in groups.iter_mut() {
         let Some(entries) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
         entries.retain_mut(|existing| {
-            if !is_cusco_hook(existing) {
+            if !is_eywa_hook(existing) {
                 return true;
             }
             if found {
@@ -228,16 +228,16 @@ fn update_cusco_hook(groups: &mut Vec<Value>, entry: &Value) -> bool {
     found
 }
 
-/// Removes every hook that runs `cusco hook` from the chosen events, then
+/// Removes every hook that runs `eywa hook` from the chosen events, then
 /// any group or event left empty by that.
-fn remove_cusco_hooks(hooks: &mut Map<String, Value>, chosen: impl Fn(&str) -> bool) {
+fn remove_eywa_hooks(hooks: &mut Map<String, Value>, chosen: impl Fn(&str) -> bool) {
     for (event, groups) in hooks.iter_mut() {
         let Some(groups) = groups.as_array_mut().filter(|_| chosen(event)) else {
             continue;
         };
         for group in groups.iter_mut() {
             if let Some(entries) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                entries.retain(|entry| !is_cusco_hook(entry));
+                entries.retain(|entry| !is_eywa_hook(entry));
             }
         }
         groups.retain(|group| {
@@ -250,18 +250,18 @@ fn remove_cusco_hooks(hooks: &mut Map<String, Value>, chosen: impl Fn(&str) -> b
     hooks.retain(|_, groups| groups.as_array().is_none_or(|groups| !groups.is_empty()));
 }
 
-/// Whether an entry runs `cusco hook <client>`, in either form: directly,
+/// Whether an entry runs `eywa hook <client>`, in either form: directly,
 /// with `args`, or as one command string for a shell.
-fn is_cusco_hook(entry: &Value) -> bool {
+fn is_eywa_hook(entry: &Value) -> bool {
     let Some(command) = entry.get("command").and_then(Value::as_str) else {
         return false;
     };
-    let is_cusco = |program: &str| Path::new(program).file_name() == Some("cusco".as_ref());
+    let is_eywa = |program: &str| Path::new(program).file_name() == Some("eywa".as_ref());
     if let Some(args) = entry.get("args").and_then(Value::as_array) {
-        return is_cusco(command) && args.first().and_then(Value::as_str) == Some("hook");
+        return is_eywa(command) && args.first().and_then(Value::as_str) == Some("hook");
     }
     let Some((program, arguments)) = command.rsplit_once(" hook ") else {
         return false;
     };
-    !arguments.contains(' ') && is_cusco(program.trim_matches('\''))
+    !arguments.contains(' ') && is_eywa(program.trim_matches('\''))
 }

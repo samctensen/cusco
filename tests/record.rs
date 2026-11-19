@@ -1,6 +1,6 @@
 mod common;
 
-use cusco::record::{BackgroundTask, HookRecord, RecordError, tool_digest};
+use eywa::record::{BackgroundTask, HookRecord, RecordError, tool_digest};
 use serde_json::json;
 
 #[test]
@@ -152,7 +152,7 @@ fn oversized_record_is_still_delivered() {
         background_tasks: Some((0..500).map(task).collect()),
         ..Default::default()
     };
-    cusco::hook::send_record(dir.path(), &record).unwrap();
+    eywa::hook::send_record(dir.path(), &record).unwrap();
     let mut buffer = vec![0u8; 1 << 20];
     let length = receiver.recv(&mut buffer).unwrap();
     let received: HookRecord = serde_json::from_slice(&buffer[..length]).unwrap();

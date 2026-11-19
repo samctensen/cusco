@@ -23,7 +23,7 @@ const CLIENT: Client = Client {
 };
 
 /// The turn opened for a busy session whose turn no hook has reported yet,
-/// for example because Cusco started mid-turn. The first hook that names the
+/// for example because Eywa started mid-turn. The first hook that names the
 /// real turn replaces it.
 const UNREPORTED_TURN: &str = "running";
 

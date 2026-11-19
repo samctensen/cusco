@@ -76,7 +76,7 @@ pub const MUSE_EVENTS: &[&str] = &[
     "SessionEnd",
 ];
 
-/// The hook events a client reports, or `None` for a client Cusco doesn't
+/// The hook events a client reports, or `None` for a client Eywa doesn't
 /// support.
 pub fn events_of(client: &str) -> Option<&'static [&'static str]> {
     Some(match client {
@@ -295,7 +295,7 @@ fn apply_muse_threads(
     Ok(())
 }
 
-/// Claude Code's `CLAUDE_CODE_ENTRYPOINT`, as Cusco's surface vocabulary.
+/// Claude Code's `CLAUDE_CODE_ENTRYPOINT`, as Eywa's surface vocabulary.
 pub(crate) fn claude_surface(entrypoint: &str) -> String {
     let surface = if entrypoint.contains("desktop") {
         "desktop"

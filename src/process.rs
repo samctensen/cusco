@@ -38,7 +38,7 @@ pub fn parent_pid(pid: u32) -> Option<u32> {
     (written == size).then_some(info.pbi_ppid)
 }
 
-/// How Cusco recognizes a client's processes.
+/// How Eywa recognizes a client's processes.
 #[derive(Clone, Debug)]
 pub struct ProcessRule {
     pub client: &'static str,
@@ -72,7 +72,7 @@ impl ProcessRule {
         }
     }
 
-    /// The rules for the clients Cusco supports. See `docs/research/`.
+    /// The rules for the clients Eywa supports. See `docs/research/`.
     pub fn defaults() -> Vec<ProcessRule> {
         vec![
             ProcessRule::new("claude", "claude", Hosting::Session),

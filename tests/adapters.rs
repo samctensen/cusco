@@ -2,14 +2,14 @@
 //! and the record's other fields; every record defaults to session `s1` and
 //! turn `p1`, and steps run one second apart unless a test sets the time.
 
-use cusco::adapter::Adapter;
-use cusco::adapter::claude::ClaudeAdapter;
-use cusco::adapter::codex::CodexAdapter;
-use cusco::adapter::grok::GrokAdapter;
-use cusco::adapter::muse::MuseAdapter;
-use cusco::record::HookRecord;
-use cusco::registry::{SessionState, Status};
-use cusco::tree::{Millis, STALE_AFTER, State, Tree};
+use eywa::adapter::Adapter;
+use eywa::adapter::claude::ClaudeAdapter;
+use eywa::adapter::codex::CodexAdapter;
+use eywa::adapter::grok::GrokAdapter;
+use eywa::adapter::muse::MuseAdapter;
+use eywa::record::HookRecord;
+use eywa::registry::{SessionState, Status};
+use eywa::tree::{Millis, STALE_AFTER, State, Tree};
 use serde_json::{Value, json};
 
 type Step = (&'static str, Value);
@@ -123,7 +123,7 @@ fn idle_closes_the_turn_before_its_outcome_is_known() {
         cwd: None,
         entrypoint: None,
     };
-    let apply = |tree: &mut Tree, events: Vec<cusco::tree::Event>, at: Millis| {
+    let apply = |tree: &mut Tree, events: Vec<eywa::tree::Event>, at: Millis| {
         for event in events {
             tree.apply(event, at);
         }
@@ -306,7 +306,7 @@ fn new_session_in_the_same_process_ends_the_old_one() {
     assert!(t.contains("/claude/session:s2"));
 }
 
-/// After a restart Cusco hasn't seen the turn start, so activity opens it.
+/// After a restart Eywa hasn't seen the turn start, so activity opens it.
 #[test]
 fn activity_after_a_restart_opens_what_was_missed() {
     let t = claude(&[("PostToolUse", json!({"tool_use_id": "tu1"}))]);

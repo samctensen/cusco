@@ -1,8 +1,8 @@
 mod common;
 
 use common::*;
-use cusco::row::Change;
-use cusco::tree::{Event, Outcome, STALE_AFTER, State};
+use eywa::row::Change;
+use eywa::tree::{Event, Outcome, STALE_AFTER, State};
 use serde_json::json;
 
 #[test]

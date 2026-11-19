@@ -73,7 +73,7 @@ pub struct Server {
     threads: Vec<JoinHandle<()>>,
 }
 
-/// Refuses a directory other users could reach the sockets through. Cusco
+/// Refuses a directory other users could reach the sockets through. Eywa
 /// creates its own directory as 0700; it never changes the permissions of a
 /// directory it didn't create.
 fn check_private(dir: &Path) -> io::Result<()> {
@@ -98,7 +98,7 @@ fn check_private(dir: &Path) -> io::Result<()> {
     }
 }
 
-/// Creates Cusco's directory, readable only by the user.
+/// Creates Eywa's directory, readable only by the user.
 pub fn create_dir(dir: &Path) -> io::Result<()> {
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -114,7 +114,7 @@ pub fn serve(config: Config) -> io::Result<Server> {
     if UnixStream::connect(&api_path).is_ok() {
         return Err(io::Error::new(
             io::ErrorKind::AddrInUse,
-            format!("another cusco is serving {}", api_path.display()),
+            format!("another eywa is serving {}", api_path.display()),
         ));
     }
     // Nothing answered, so any socket files left here are from a crash.
