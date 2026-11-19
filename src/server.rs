@@ -8,6 +8,8 @@
 use crate::adapter::Adapter;
 use crate::adapter::claude::ClaudeAdapter;
 use crate::adapter::codex::CodexAdapter;
+use crate::adapter::grok::GrokAdapter;
+use crate::adapter::muse::MuseAdapter;
 use crate::api::{ApiRequest, Op, Subscribers, error_line, parse_request, snapshot_line};
 use crate::process;
 use crate::record::HookRecord;
@@ -175,6 +177,8 @@ fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> 
         let adapters: Vec<Box<dyn Adapter>> = vec![
             Box::new(ClaudeAdapter::new()),
             Box::new(CodexAdapter::new()),
+            Box::new(GrokAdapter::new()),
+            Box::new(MuseAdapter::new()),
         ];
         let clients: Vec<_> = adapters.iter().map(|adapter| adapter.client()).collect();
         let mut core = Core {

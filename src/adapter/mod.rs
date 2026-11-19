@@ -10,6 +10,8 @@
 
 pub mod claude;
 pub mod codex;
+pub mod grok;
+pub mod muse;
 
 use crate::record::HookRecord;
 use crate::tree::{Attrs, Client, Event, Millis, Outcome};
@@ -133,6 +135,7 @@ pub(crate) struct Tracker {
     agents: HashMap<String, Agent>,
     /// Open tool calls per actor: `(digest, tool_use_id)`, oldest first.
     calls: HashMap<String, VecDeque<(String, String)>>,
+    newest_call: Option<String>,
     requests: HashMap<String, Request>,
 }
 
@@ -145,6 +148,7 @@ impl Tracker {
             numbered: 0,
             agents: HashMap::new(),
             calls: HashMap::new(),
+            newest_call: None,
             requests: HashMap::new(),
         }
     }
@@ -300,6 +304,7 @@ impl Tracker {
         if calls.len() > RECENT_CALLS {
             calls.pop_front();
         }
+        self.newest_call = Some(tool_use_id.to_string());
     }
 
     pub(crate) fn forget_call(&mut self, tool_use_id: &str) {
@@ -316,6 +321,11 @@ impl Tracker {
             .and_then(|digest| calls.iter().rev().find(|(seen, _)| seen == digest))
             .or_else(|| (calls.len() == 1).then(|| &calls[0]))
             .map(|(_, id)| id.clone())
+    }
+
+    /// The most recently started tool call in the session, from any actor.
+    pub(crate) fn newest_call(&self) -> Option<String> {
+        self.newest_call.clone()
     }
 
     /// A new tool call from the actor answers its approvals, except within
