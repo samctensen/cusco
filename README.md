@@ -2,9 +2,9 @@
 
 **Which of my coding agents needs me?**
 
-Cusco is a small background service for macOS that watches the coding agents
-on your machine (Claude Code, Codex, Grok Build and Muse Code) and tells any
-program which ones are working, which are idle and which are waiting on you.
+A background service for macOS that watches Claude Code, Codex, Grok Build and
+Muse Code, and tells any program which agents are working, idle or waiting on
+you.
 
 ```console
 $ cusco status --requests | jq -r '.rows[] | "\(.attrs.reason)\t\(.id)"'
@@ -12,59 +12,29 @@ approval	/claude/session:7f3a/turn:12/agent:a2/request:t9
 question	/codex/session:019a/turn:4/request:call_8
 ```
 
-You keep using your agents the way you do today. Their hooks report lifecycle
-events to Cusco, which keeps one live picture of every session, turn, subagent
-and pending approval. Any program can read that picture or subscribe to it over
-a local socket: the `cusco` command line, a menu bar app, keyboard lights, a
-Stream Deck key, a tmux status line. Cusco defines the data, and each consumer
-decides how to show it.
-
-The name comes from the Inca capital, the hub of a road network along which
-relay runners carried messages. Here the hooks are the runners.
-
-> **Status:** v0.2, macOS only. Supports Claude Code, Codex, Grok Build and Muse
-> Code.
+Your agents' hooks report to Cusco, and anything can subscribe over a local
+socket: the `cusco` CLI, a menu bar app, keyboard lights, a tmux status line.
 
 ## Install
 
-Install with Homebrew, start the service and connect your agents:
-
 ```sh
 brew install samctensen/tap/cusco
-brew services start cusco
-cusco setup
+brew services start cusco   # runs Cusco now and at every login
+cusco setup                 # adds Cusco's hook to each agent you have
 ```
 
-- `brew services` runs Cusco in the background, starts it at login and restarts
-  it if it crashes. `cusco stop` stops it until `brew services restart cusco`
-  or your next login.
-- `cusco setup` adds Cusco's hook to each agent it finds on your machine. It
-  keeps your other settings and other tools' hooks, and it's safe to run again.
+Then:
 
-| Agent | Hook file |
-| --- | --- |
-| Claude Code | `~/.claude/settings.json` |
-| Codex | `~/.codex/hooks.json` |
-| Grok Build | `~/.grok/hooks/cusco.json` |
-| Muse Code | `~/.config/muse/settings.json` |
+- **Codex:** run `/hooks` and trust the new hooks.
+- **Grok Build:** trust the folders you work in.
+- Start a new session in each agent, so it loads the hooks.
 
-Then finish up in your agents:
+`cusco status` should now list your agents. The hooks never slow down or block
+an agent, even when Cusco isn't running.
 
-1. **Codex:** run `/hooks` and trust the new hooks. Codex skips hooks until
-   they're trusted.
-2. **Grok Build:** trust the folders you work in. Grok skips hooks in untrusted
-   folders.
-3. Start a new session in each agent, so it picks up the hooks.
-
-Check that it's working:
-
-```sh
-cusco status
-```
-
-The hook command forwards a short list of identifiers and exits immediately. It
-never writes output, never fails and never waits for Cusco, so your agents
-aren't slowed down or blocked even when Cusco isn't running.
+`cusco setup` only adds its own entries to each agent's settings
+(`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.grok/hooks/cusco.json`,
+`~/.config/muse/settings.json`), and it's safe to run again.
 
 ### Update
 
@@ -73,21 +43,13 @@ brew upgrade cusco
 brew services restart cusco
 ```
 
-The hooks point at Homebrew's stable `bin/cusco` link, so they keep working
-across upgrades and Codex keeps trusting them.
-
 ### Without Homebrew
 
-With a Rust toolchain (1.88 or later):
-
 ```sh
-cargo install --git https://github.com/samctensen/cusco
+cargo install --git https://github.com/samctensen/cusco   # needs Rust 1.88+
 cusco setup
-cusco serve
+cusco serve   # runs in the foreground; stop it with ⌃C or cusco stop
 ```
-
-`cusco serve` runs in the foreground; keep it running however you like, and
-stop it with ⌃C or `cusco stop`.
 
 ### Uninstall
 
@@ -101,30 +63,26 @@ brew uninstall cusco
 
 | Command | What it does |
 | --- | --- |
-| `cusco setup` | Adds Cusco's hook to every supported agent on this machine. |
-| `cusco setup claude codex` | Adds it to the named agents only: `claude`, `codex`, `grok`, `muse`. |
-| `cusco setup --remove` | Takes Cusco's hooks out again. Accepts agent names too. |
+| `cusco setup [agent…]` | Adds Cusco's hook to the named agents (`claude`, `codex`, `grok`, `muse`), or to every one installed. |
+| `cusco setup --remove [agent…]` | Takes the hooks out again. |
 | `cusco serve` | Runs the service in the foreground. `brew services` does this for you. |
-| `cusco stop` | Stops the running service and waits until it has. Under `brew services`, it stays stopped until `brew services restart cusco` or your next login. |
+| `cusco stop` | Stops the service. Under `brew services`, it stays stopped until `brew services restart cusco` or your next login. |
 | `cusco status` | Prints one snapshot and exits. |
-| `cusco watch` | Prints a snapshot, then every change as it happens, until you press ⌃C or Cusco stops. |
-| `cusco visualize` | A live, full-screen view of every agent in the terminal. ⌃C quits. |
+| `cusco watch` | Prints a snapshot, then every change, until ⌃C or Cusco stops. |
+| `cusco visualize` | A live, full-screen view of every agent. ⌃C quits. |
 | `cusco --version` | Prints the version. |
 
-`status` and `watch` print JSON, one message per line, in the format described
-in [the API reference](docs/api.md). They take the same options:
+`status` and `watch` print JSON lines in [the API's format](docs/api.md), and
+take these options:
 
 | Option | Meaning |
 | --- | --- |
-| `--path <id>` | Start at this node instead of the whole machine, for example `/claude`. |
-| `--depth <n>` | How many levels below the path to include. `0` is the node alone. The default is `1`. |
-| `--requests` | List every open request across all agents instead of the tree. |
+| `--path <id>` | Start at this node, for example `/claude`, instead of the whole machine. |
+| `--depth <n>` | Levels below the path to include: machine, agent app, session, turn, subagent. `0` is the node alone; the default is `1`. |
+| `--requests` | List every open request instead of the tree. |
 
-The levels are machine (`/`), agent app (`/claude`), session, turn and
-subagent, so `--depth 2` stops at sessions.
-
-`status` and `stop` exit with `1` if Cusco isn't running, and `2` if the
-options are wrong.
+`status` and `stop` exit with `1` if Cusco isn't running, and `2` on bad
+options.
 
 ### Recipes
 
