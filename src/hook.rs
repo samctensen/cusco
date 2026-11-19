@@ -76,7 +76,8 @@ pub fn run_hook(client: &str, input: impl Read, dir: &Path) {
         return;
     };
     if record.pid.is_none()
-        && let Some(pid) = process::find_ancestor(std::process::id(), client)
+        && let Some(rule) = process::ProcessRule::for_client(client)
+        && let Some(pid) = process::find_ancestor(std::process::id(), &rule)
     {
         record.pid = Some(pid);
         record

@@ -108,7 +108,7 @@ fn serve() -> ExitCode {
         dir: dir.clone(),
         stale_after: STALE_AFTER,
         subscriber_queue: SUBSCRIBER_QUEUE,
-        executables: vec![("claude", "claude".into()), ("codex", "codex".into())],
+        executables: cusco::process::ProcessRule::defaults(),
     };
     match server::serve(config) {
         Ok(server) => {
