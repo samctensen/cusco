@@ -248,7 +248,7 @@
           "examples": ["cli", "desktop", "ide"]
         },
         "last_turn": {
-          "description": "How the most recent turn ended. Missing until a turn ends.",
+          "description": "How the most recent turn ended. Missing until a turn ends, and while the latest turn's outcome is still being settled: after an interrupt it follows the idle state by up to two seconds.",
           "type": "object",
           "required": ["outcome", "ended_at"],
           "properties": {

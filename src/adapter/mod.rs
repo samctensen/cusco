@@ -25,6 +25,11 @@ pub trait Adapter: Send {
     fn observe(&mut self, _state: &crate::registry::SessionState, _at: Millis) -> Vec<Event> {
         Vec::new()
     }
+    /// The settle time has passed since the session was observed going
+    /// idle: whatever the adapter was waiting to learn, it decides now.
+    fn settle(&mut self, _session_id: &str, _at: Millis) -> Vec<Event> {
+        Vec::new()
+    }
     /// Drops all state for a session that ended outside the adapter's view,
     /// for example because its process exited.
     fn forget_session(&mut self, session_id: &str);
@@ -213,9 +218,24 @@ impl Tracker {
         let Some(turn) = turn.map(String::from).or_else(|| self.open_turn.clone()) else {
             return;
         };
-        let path = turn_path(&self.session, &turn);
-        events.push(close(path.clone(), outcome));
-        if self.open_turn.as_deref() == Some(turn.as_str()) {
+        self.finish_turn(&turn, Some(outcome), events);
+    }
+
+    /// Ends the open turn before its outcome is known, and returns its id.
+    /// Whoever calls this records the outcome on the session once it is.
+    pub(crate) fn end_turn_unsettled(&mut self, events: &mut Vec<Event>) -> Option<String> {
+        let turn = self.open_turn.clone()?;
+        self.finish_turn(&turn, None, events);
+        Some(turn)
+    }
+
+    fn finish_turn(&mut self, turn: &str, outcome: Option<Outcome>, events: &mut Vec<Event>) {
+        let path = turn_path(&self.session, turn);
+        events.push(match outcome {
+            Some(outcome) => close(path.clone(), outcome),
+            None => Event::End { id: path.clone() },
+        });
+        if self.open_turn.as_deref() == Some(turn) {
             self.open_turn = None;
         }
         let prefix = format!("{path}/request:");

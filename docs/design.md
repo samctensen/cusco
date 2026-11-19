@@ -155,7 +155,11 @@ an `observes` record, so a consumer can tell "really idle" from "can't see this"
 
 ### Capture
 
-Each client's hook configuration runs `cusco hook <client>`. The hook command
+Each client's hook configuration runs `cusco hook <client>`. Where a client can
+run a command with no shell (Claude Code and Grok Build, through `args`),
+`cusco setup` writes that form; Codex and Muse Code run the command through a
+shell. Run with no arguments and piped input, `cusco` exits 0 silently, so a
+client that ignores `args` can't fail a hook. The hook command
 parses the client's payload and hook environment into one record shape, keeps only
 the allowed fields, sends them as one datagram to Cusco's ingest socket and exits.
 If Cusco isn't running, it exits immediately with status 0. It never prints: every
@@ -210,13 +214,14 @@ startup (see Recovery).
 
 ### Normalized events
 
-Adapters produce five event types. The core knows nothing about any specific
+Adapters produce six event types. The core knows nothing about any specific
 client.
 
 | Event | Effect |
 | --- | --- |
 | `open {node}` | A node appeared. |
 | `close {id, outcome}` | A node ended: `ok`, `error` or `cancelled`. |
+| `end {id}` | A node ended and its outcome isn't known yet. It closes as `close` does. A turn's `end` clears its session's `last_turn`; the outcome follows as an `attr`. |
 | `attr {id, attrs}` | A node's attributes changed. |
 | `lost {scope}` | The open nodes in `scope` become unconfirmed. |
 | `sync {scope, nodes}` | Authoritative replacement of a subtree, used for recovery. Cusco diffs it against what it has and publishes the changes. |
@@ -448,7 +453,7 @@ and applies each status change:
 | --- | --- |
 | `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`, which the first hook naming the real turn replaces. Close any open request: going busy again after waiting means it was answered. |
 | `waiting` | Open a request if none is open, else mark the open ones `prompted`. |
-| `idle` | After two seconds, close a turn that is still open as `cancelled`. An ordinary `Stop` hook arrives within that time and wins, so only interrupted turns close this way. |
+| `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled and the session has no `last_turn`: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does, and then nothing is recorded. |
 
 At startup this states every Claude session at once, with no `unknown`.
 

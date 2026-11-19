@@ -6,7 +6,9 @@ use super::{
 };
 use crate::record::{HookRecord, claude_surface};
 use crate::registry::{SessionState, Status};
-use crate::tree::{Attribution, Attrs, Client, Detection, Event, Millis, Observes, Outcome};
+use crate::tree::{
+    Attribution, Attrs, Client, Detection, Event, Millis, Observes, Outcome, last_turn,
+};
 use std::collections::{HashMap, HashSet};
 
 const CLIENT: Client = Client {
@@ -25,11 +27,19 @@ const CLIENT: Client = Client {
 /// real turn replaces it.
 const UNREPORTED_TURN: &str = "running";
 
+/// A turn the session registry ended before any hook said how it ended.
+struct Unsettled {
+    turn: String,
+    ended_at: Millis,
+}
+
 #[derive(Default)]
 pub struct ClaudeAdapter {
     sessions: Sessions,
     /// The session each Claude process is running.
     processes: HashMap<u32, String>,
+    /// Each session's turn that has ended with its outcome still to come.
+    unsettled: HashMap<String, Unsettled>,
 }
 
 impl ClaudeAdapter {
@@ -40,6 +50,7 @@ impl ClaudeAdapter {
     fn end(&mut self, session_id: &str) {
         self.sessions.end(session_id);
         self.processes.retain(|_, session| session != session_id);
+        self.unsettled.remove(session_id);
     }
 
     /// A Claude process runs one session at a time, so a new session id
@@ -76,9 +87,39 @@ impl Adapter for ClaudeAdapter {
             self.end(&record.session_id);
             return events;
         }
+        if record.agent_id.is_none()
+            && let Some(unsettled) = self.unsettled.get(&record.session_id)
+        {
+            let outcome = match record.event.as_str() {
+                "Stop" => Some(Outcome::Ok),
+                "StopFailure" => Some(Outcome::Error),
+                "UserPromptSubmit" if record.turn_id.as_deref() != Some(&unsettled.turn) => {
+                    Some(Outcome::Cancelled)
+                }
+                // The same turn again: it continues, so it has no outcome yet.
+                "UserPromptSubmit" => None,
+                // A late hook from the ended turn must not reopen it.
+                _ => return events,
+            };
+            let ended_at = unsettled.ended_at;
+            self.unsettled.remove(&record.session_id);
+            if let Some(outcome) = outcome {
+                events.push(record_outcome(&session, outcome, ended_at));
+            }
+        }
         let tracker = self.sessions.tracker(CLIENT.name, &record.session_id);
         handle_event(tracker, record, at, &mut events);
         events
+    }
+
+    /// No `Stop` hook followed the idle: the turn was interrupted.
+    fn settle(&mut self, session_id: &str, _at: Millis) -> Vec<Event> {
+        let session = session_path(CLIENT.name, session_id);
+        self.unsettled
+            .remove(session_id)
+            .map(|unsettled| record_outcome(&session, Outcome::Cancelled, unsettled.ended_at))
+            .into_iter()
+            .collect()
     }
 
     fn forget_session(&mut self, session_id: &str) {
@@ -101,6 +142,14 @@ impl Adapter for ClaudeAdapter {
         }
         events.push(open(session_path(CLIENT.name, &state.session_id), attrs));
         let tracker = self.sessions.tracker(CLIENT.name, &state.session_id);
+        if state.status != Status::Idle
+            && let Some(unsettled) = self.unsettled.remove(&state.session_id)
+            && let Some(actor) = tracker.root(Some(&unsettled.turn))
+        {
+            // Running again: the idle didn't hold, so the turn it closed is
+            // still the one running and has no outcome.
+            tracker.enter(&actor, &mut events);
+        }
         match &state.status {
             // Busy again after waiting: whatever it waited on was answered.
             Status::Busy => {
@@ -116,11 +165,28 @@ impl Adapter for ClaudeAdapter {
                     tracker.open_request(&actor, "waiting", reason, at, &mut events);
                 }
             }
-            // Idle with a turn still open: the turn was interrupted, or an
-            // approval was denied and the agent stopped.
-            Status::Idle => tracker.end_turn(None, Outcome::Cancelled, &mut events),
+            // Idle with a turn still open: the turn was interrupted, an
+            // approval was denied and the agent stopped, or the turn finished
+            // and its `Stop` hook is still on its way. It ends now; `handle`
+            // or `settle` records how.
+            Status::Idle => {
+                if let Some(turn) = tracker.end_turn_unsettled(&mut events) {
+                    let unsettled = Unsettled { turn, ended_at: at };
+                    self.unsettled.insert(state.session_id.clone(), unsettled);
+                }
+            }
         }
         events
+    }
+}
+
+/// Records how a session's most recent turn ended.
+fn record_outcome(session: &str, outcome: Outcome, ended_at: Millis) -> Event {
+    let mut attrs = Attrs::new();
+    attrs.insert("last_turn".into(), last_turn(outcome, ended_at));
+    Event::Attr {
+        id: session.to_string(),
+        attrs,
     }
 }
 

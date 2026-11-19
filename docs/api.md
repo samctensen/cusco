@@ -235,7 +235,7 @@ What each client reports today:
 | `cwd` | string | The session's working directory, as an absolute path. |
 | `pid` | integer | The agent process the session runs in. Several sessions can share one process. |
 | `surface` | string | Where the session runs: `cli`, `desktop` or `ide`. Claude Code entry points Cusco doesn't recognize, such as SDK ones, pass through unchanged. |
-| `last_turn` | object | How the session's most recent turn ended. Missing until a turn ends. |
+| `last_turn` | object | How the session's most recent turn ended. Missing until a turn ends, and while Cusco is still learning how the latest turn ended: after a Claude Code interrupt it follows the `idle` state by up to two seconds. |
 | `last_turn.outcome` | string | `ok`, `error` or `cancelled` (interrupted). |
 | `last_turn.ended_at` | string | When it ended, in the same format as `since`. |
 

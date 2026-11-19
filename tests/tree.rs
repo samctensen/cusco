@@ -76,6 +76,34 @@ fn closing_rules() {
         !t.contains("/claude/session:s1"),
         "a session closes everything beneath it"
     );
+
+    // An end closes like a close but records no outcome: that follows later.
+    // Until it does, the turn before no longer says how the latest one ended.
+    open(&mut t, "/claude/session:s2/turn:p0", 7);
+    close(&mut t, "/claude/session:s2/turn:p0", Outcome::Ok, 7);
+    open(&mut t, "/claude/session:s2/turn:p1/request:r1", 7);
+    open(&mut t, "/claude/session:s2/turn:p1/agent:a1", 7);
+    t.apply(
+        Event::End {
+            id: "/claude/session:s2/turn:p1".into(),
+        },
+        8,
+    );
+    assert_eq!(
+        t.state("/claude/session:s2"),
+        Some(State::Working),
+        "the subagent keeps running"
+    );
+    assert!(
+        !t.contains("/claude/session:s2/turn:p1/request:r1"),
+        "the turn's own request closed with it"
+    );
+    assert!(
+        t.attrs("/claude/session:s2")
+            .unwrap()
+            .get("last_turn")
+            .is_none()
+    );
 }
 
 #[test]

@@ -50,9 +50,9 @@ pub struct Config {
     pub claude_sessions: Option<PathBuf>,
 }
 
-/// How long a session's registry may say `idle` before an open turn is
-/// closed. A normal turn end's `Stop` hook arrives within this time and wins,
-/// so only interrupted turns close as cancelled.
+/// How long the outcome of a turn closed by the registry's `idle` may wait
+/// for a `Stop` hook. The turn itself closes at once; with no `Stop` in this
+/// time it was interrupted, and its outcome is `cancelled`.
 const IDLE_SETTLE: Millis = 2_000;
 
 enum Input {
@@ -193,8 +193,9 @@ struct Core {
     watched: HashSet<u32>,
     /// The registry status last applied to each Claude session.
     applied: HashMap<String, Status>,
-    /// Idle statuses waiting out the settle time, with when they apply.
-    settling: HashMap<String, (Millis, SessionState)>,
+    /// When each session that went idle settles: by then the outcome of the
+    /// turn that idle closed is decided.
+    settling: HashMap<String, Millis>,
 }
 
 fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> JoinHandle<()> {
@@ -225,7 +226,7 @@ fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> 
 impl Core {
     fn run(&mut self, inputs: &Receiver<Input>) {
         loop {
-            let settles = self.settling.values().map(|(due, _)| *due).min();
+            let settles = self.settling.values().copied().min();
             let next = [self.tree.next_deadline(), settles]
                 .into_iter()
                 .flatten()
@@ -253,38 +254,46 @@ impl Core {
         }
     }
 
-    /// Applies Claude registry statuses that changed. A session going idle
-    /// waits out the settle time first; one seen idle for the first time
-    /// (at startup) applies at once, since no turn is open to close.
+    /// Applies Claude registry statuses that changed, each at once. Going
+    /// idle also starts the settle time for the turn it closed. Every file
+    /// change re-reads every session, so a status already applied is skipped
+    /// and its settle time left running.
     fn observe_sessions(&mut self, states: Vec<SessionState>) {
         let at = now();
         for state in states {
             self.watch(state.pid);
-            let previous = self.applied.get(&state.session_id);
-            if previous == Some(&state.status) {
-                self.settling.remove(&state.session_id);
+            if self.applied.get(&state.session_id) == Some(&state.status) {
                 continue;
             }
-            if state.status == Status::Idle && previous.is_some() {
+            if state.status == Status::Idle {
                 self.settling
-                    .insert(state.session_id.clone(), (at + IDLE_SETTLE, state));
+                    .insert(state.session_id.clone(), at + IDLE_SETTLE);
             } else {
                 self.settling.remove(&state.session_id);
-                self.apply_state(&state, at);
             }
+            self.apply_state(&state, at);
         }
     }
 
+    /// Tells the Claude adapter which idle sessions' settle time has passed.
     fn apply_settled(&mut self, at: Millis) {
         let due: Vec<String> = self
             .settling
             .iter()
-            .filter(|(_, (when, _))| *when <= at)
+            .filter(|(_, when)| **when <= at)
             .map(|(id, _)| id.clone())
             .collect();
         for id in due {
-            if let Some((_, state)) = self.settling.remove(&id) {
-                self.apply_state(&state, at);
+            self.settling.remove(&id);
+            let Some(claude) = self
+                .adapters
+                .iter_mut()
+                .find(|adapter| adapter.client().name == "claude")
+            else {
+                continue;
+            };
+            for event in claude.settle(&id, at) {
+                self.tree.apply(event, at);
             }
         }
     }

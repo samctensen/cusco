@@ -2,7 +2,7 @@ use cusco::launchd;
 use cusco::server::{self, API_SOCKET, Config, SUBSCRIBER_QUEUE, default_dir};
 use cusco::tree::STALE_AFTER;
 use serde_json::{Map, Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::process::ExitCode;
@@ -40,6 +40,9 @@ fn main() -> ExitCode {
             println!("cusco {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+        // A client that ignores a hook's `args` runs bare `cusco` with the
+        // payload piped in. Failing there could block the agent's tool call.
+        None if !std::io::stdin().is_terminal() => ExitCode::SUCCESS,
         _ => usage(),
     }
 }
@@ -83,9 +86,8 @@ fn setup(args: &[String]) -> ExitCode {
     };
     let mut code = ExitCode::SUCCESS;
     for target in chosen {
-        let command = cusco::setup::hook_command(&executable, target.client);
         let path = target.path.display();
-        match cusco::setup::apply(&target, &command, remove) {
+        match cusco::setup::apply(&target, &executable, remove) {
             Ok(cusco::setup::Outcome::Added) => {
                 println!("{}: added hooks to {path}", target.client);
                 if target.client == "codex" {

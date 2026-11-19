@@ -12,6 +12,9 @@ pub struct Target {
     /// The client's configuration folder; its presence means the client is installed.
     pub home: PathBuf,
     pub path: PathBuf,
+    /// Whether the client runs a command given with `args` directly, with no
+    /// shell in between.
+    pub exec: bool,
     events: &'static [&'static str],
     /// The settings a new file starts with.
     seed: fn() -> Value,
@@ -41,6 +44,7 @@ pub fn targets() -> Vec<Target> {
             client: "claude",
             path: claude.join("settings.json"),
             home: claude,
+            exec: true,
             events: CLAUDE_EVENTS,
             seed: empty,
         },
@@ -48,6 +52,7 @@ pub fn targets() -> Vec<Target> {
             client: "codex",
             path: codex.join("hooks.json"),
             home: codex,
+            exec: false,
             events: CODEX_EVENTS,
             seed: empty,
         },
@@ -56,6 +61,7 @@ pub fn targets() -> Vec<Target> {
             client: "grok",
             path: grok.join("hooks").join("cusco.json"),
             home: grok,
+            exec: true,
             events: GROK_EVENTS,
             seed: empty,
         },
@@ -63,6 +69,7 @@ pub fn targets() -> Vec<Target> {
             client: "muse",
             path: muse.join("settings.json"),
             home: muse,
+            exec: false,
             events: MUSE_EVENTS,
             seed: || json!({"schema_version": 1}),
         },
@@ -102,7 +109,7 @@ pub fn hook_command(executable: &Path, client: &str) -> String {
 /// Cusco's hooks out. A Cusco hook already present is updated where it sits:
 /// Codex trusts hooks by their position, so moving one would untrust the
 /// hooks after it.
-pub fn apply(target: &Target, command: &str, remove: bool) -> io::Result<Outcome> {
+pub fn apply(target: &Target, executable: &Path, remove: bool) -> io::Result<Outcome> {
     let original = match std::fs::read_to_string(&target.path) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -137,12 +144,13 @@ pub fn apply(target: &Target, command: &str, remove: bool) -> io::Result<Outcome
     };
     remove_cusco_hooks(hooks, |event| remove || !target.events.contains(&event));
     if !remove {
+        let entry = hook_entry(executable, target.client, target.exec);
         for event in target.events {
             let groups = hooks.entry(*event).or_insert_with(|| json!([]));
             if let Some(groups) = groups.as_array_mut()
-                && !update_cusco_hook(groups, command)
+                && !update_cusco_hook(groups, &entry)
             {
-                groups.push(json!({"hooks": [hook_entry(command)]}));
+                groups.push(json!({"hooks": [entry]}));
             }
         }
     }
@@ -175,27 +183,39 @@ pub fn apply(target: &Target, command: &str, remove: bool) -> io::Result<Outcome
     })
 }
 
-fn hook_entry(command: &str) -> Value {
-    json!({"type": "command", "command": command, "timeout": 2})
+/// The hook entry for a client. With `exec` the client runs the executable
+/// directly, so its path is given as it is; otherwise the command goes
+/// through the client's shell.
+pub fn hook_entry(executable: &Path, client: &str, exec: bool) -> Value {
+    if exec {
+        json!({
+            "type": "command",
+            "command": executable.to_string_lossy(),
+            "args": ["hook", client],
+            "timeout": 2,
+        })
+    } else {
+        json!({"type": "command", "command": hook_command(executable, client), "timeout": 2})
+    }
 }
 
-/// Points the event's first Cusco hook at `command`, in place, and drops any
-/// duplicates. Returns whether there was one.
-fn update_cusco_hook(groups: &mut Vec<Value>, command: &str) -> bool {
+/// Replaces the event's first Cusco hook with `entry`, in place, and drops
+/// any duplicates. Returns whether there was one.
+fn update_cusco_hook(groups: &mut Vec<Value>, entry: &Value) -> bool {
     let mut found = false;
     for group in groups.iter_mut() {
         let Some(entries) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
             continue;
         };
-        entries.retain_mut(|entry| {
-            if !is_cusco_hook(entry) {
+        entries.retain_mut(|existing| {
+            if !is_cusco_hook(existing) {
                 return true;
             }
             if found {
                 return false;
             }
             found = true;
-            *entry = hook_entry(command);
+            *existing = entry.clone();
             true
         });
     }
@@ -230,13 +250,18 @@ fn remove_cusco_hooks(hooks: &mut Map<String, Value>, chosen: impl Fn(&str) -> b
     hooks.retain(|_, groups| groups.as_array().is_none_or(|groups| !groups.is_empty()));
 }
 
+/// Whether an entry runs `cusco hook <client>`, in either form: directly,
+/// with `args`, or as one command string for a shell.
 fn is_cusco_hook(entry: &Value) -> bool {
     let Some(command) = entry.get("command").and_then(Value::as_str) else {
         return false;
     };
+    let is_cusco = |program: &str| Path::new(program).file_name() == Some("cusco".as_ref());
+    if let Some(args) = entry.get("args").and_then(Value::as_array) {
+        return is_cusco(command) && args.first().and_then(Value::as_str) == Some("hook");
+    }
     let Some((program, arguments)) = command.rsplit_once(" hook ") else {
         return false;
     };
-    let program = program.trim_matches('\'');
-    !arguments.contains(' ') && Path::new(program).file_name() == Some("cusco".as_ref())
+    !arguments.contains(' ') && is_cusco(program.trim_matches('\''))
 }
