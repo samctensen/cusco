@@ -2,7 +2,7 @@
 
 **18 November 2026.** Cross-reading of the five briefings in this folder:
 [anthropic](anthropic.md), [openai](openai.md), [grok](grok.md), [muse](muse.md) and
-[google](google.md). It compares what each client exposes, lists where Cusco's design
+[google](google.md). It compares what each client exposes, lists where Eywa's design
 (`docs/design.md`) holds up and where it doesn't, and proposes the v0.2 changes.
 
 ## At a glance
@@ -43,7 +43,7 @@ per client that maps that client's payload *and environment* into the record, pl
 per-client digest rules (Codex: drop `description` before hashing). The allowed-field
 lists in the briefings become the parsers' specifications.
 
-Grok runs `~/.claude/settings.json` hooks by default, so `cusco hook claude` receives
+Grok runs `~/.claude/settings.json` hooks by default, so `eywa hook claude` receives
 Grok payloads. The hook command detects `GROK_HOOK_EVENT`, relabels the record as
 `grok`, and the adapter drops the duplicate by the envelope's `timestamp`.
 
@@ -85,7 +85,7 @@ App". Proposed shape, on the client row and on session rows when the surface dif
   service, and Antigravity's App and daemon each run many sessions in one process. A
   host's exit closes all its sessions, but a running host is not evidence of an
   unreported session. So it gets no `process` placeholder, which today keeps Codex
-  `unknown` forever after a Cusco restart. Process placeholders apply only to clients
+  `unknown` forever after an Eywa restart. Process placeholders apply only to clients
   that run one session per process (Claude, Antigravity CLI, Grok TUI).
 - **Pid:** use `CLAUDE_PID` where offered; keep the parent walk as the fallback.
 
@@ -110,14 +110,14 @@ Codex's automatic reviewer and Muse's model reviewer decide some approvals after
 after about 6 seconds, Grok as its only signal), it confirms a person is being asked.
 
 ### 8. Setup per client, and positional trust
-- Codex keys hook trust by position (file, event, group index, handler index). `cusco
+- Codex keys hook trust by position (file, event, group index, handler index). `eywa
   setup` currently removes its entry and appends a new one, which shifts any group
   added after it and silently untrusts another tool's hook. It must update its entry in
   place and only ever append new ones.
-- Grok gets its own file (`$GROK_HOME/hooks/cusco.json`), plus Grok.app's separate
-  agent home. Antigravity gets a named `"cusco"` entry. Muse needs exact JSON, because
+- Grok gets its own file (`$GROK_HOME/hooks/eywa.json`), plus Grok.app's separate
+  agent home. Antigravity gets a named `"eywa"` entry. Muse needs exact JSON, because
   one wrong-typed field disables every hook in the file.
-- `cusco doctor` checks trust (Codex positional, Claude and Grok folder trust) and
+- `eywa doctor` checks trust (Codex positional, Claude and Grok folder trust) and
   reports hooks that are installed but silent.
 
 ### Smaller corrections already identified
@@ -133,7 +133,7 @@ Some states can't be observed by any means found:
 - Approvals in the Antigravity App and IDE.
 - Which approvals a person (not a reviewer) will see in Codex.
 
-Each client's `observes` record should say so, rather than Cusco showing `idle` where
+Each client's `observes` record should say so, rather than Eywa showing `idle` where
 it can't see.
 
 ## Proposed v0.2
@@ -145,7 +145,7 @@ it can't see.
 3. **Processes:** executable patterns per client; host versus session processes;
    `CLAUDE_PID`.
 4. **Fix the Claude and Codex adapters** from their briefings.
-5. **Add Grok, Muse and Antigravity adapters**, with `cusco setup` writers for each and
+5. **Add Grok, Muse and Antigravity adapters**, with `eywa setup` writers for each and
    the Codex positional fix.
 6. **First state source:** the Claude session registry, as a `sync` feed.
 
@@ -161,4 +161,4 @@ Later: Codex and Muse state databases, the Antigravity status line, Gemini CLI.
    available to verify against, since nothing current is installed on this Mac.
 3. **Live verification:** each briefing lists 14 to 19 items only a recorded session
    can settle. That needs hooks installed on this Mac and real sessions recorded with
-   `CUSCO_RECORD`.
+   `EYWA_RECORD`.

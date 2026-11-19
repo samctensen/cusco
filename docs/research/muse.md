@@ -1,4 +1,4 @@
-# Muse Code: research briefing for a Cusco adapter
+# Muse Code: research briefing for an Eywa adapter
 
 **Research · 18 November 2026**
 
@@ -60,7 +60,7 @@ output schema and one set of size caps (docs).
 | Project | `<project-root>/.muse/hooks.json` | the workspace must be trusted (TUI prompt or `--trust-workspace`) | at session start (docs) |
 | Plugin | the manifest's `capabilities.hooks` in a `.muse-plugin` package (Claude Code and Codex plugin formats are also imported) | each hook is approved with `muse plugins approve`. Any change returns it to review | at host start (docs) |
 
-**Cusco should use the user source.** It has no trust step, unlike Codex
+**Eywa should use the user source.** It has no trust step, unlike Codex
 (inference from docs). Edits take effect **at the next session, not in the
 running one** (docs). Sessions that are already running never report until they
 are restarted (inference).
@@ -86,10 +86,10 @@ are restarted (inference).
   the wrong type, such as `"timeout": "5"`, **rejects the whole file**, so every
   hook in it is lost, including other tools' hooks. A malformed settings file
   (for example one without `schema_version`) **stops Muse from starting** (docs).
-  `cusco setup` must therefore write exact, validated JSON.
+  `eywa setup` must therefore write exact, validated JSON.
 - `hooks.state` is a reserved map for per-hook enablement (docs).
 - Matchers do not apply to `UserPromptSubmit` and `Stop`: anything other than
-  `*` skips the group (docs). Cusco should omit the matcher everywhere.
+  `*` skips the group (docs). Eywa should omit the matcher everywhere.
 - `~/.config/muse/` also holds `.settings.json.lock`, which suggests Muse writes
   settings under a lock (local install). Its exact protocol is not documented.
 
@@ -109,7 +109,7 @@ are restarted (inference).
   `MUSE_SESSION_ID` in a top-level chat). These two are applied last, so nothing
   can override them. A run with no real session gets neither. Plugin hooks also
   get `MUSE_PLUGIN_*` variables. The hook command therefore cannot rely on any
-  `CUSCO_*` variable and must find its socket from `HOME`.
+  `EYWA_*` variable and must find its socket from `HOME`.
 - **Concurrency.** "Every handler that matches an occurrence starts at the same
   time." Answers are applied in configured order (managed, then user, then
   project). `async: true` makes a hook observation-only, running alongside the
@@ -122,7 +122,7 @@ are restarted (inference).
 
 ### What output and exit codes do (docs)
 
-The output can change agent behavior, so **Cusco's hook must stay silent and
+The output can change agent behavior, so **Eywa's hook must stay silent and
 exit 0**:
 
 | Exit | Effect |
@@ -143,7 +143,7 @@ deliberate: a bare `permissionDecision: allow` is rejected, and the
 - **MSP (Muse Session Protocol).** JSON-RPC 2.0 over the stdio of a `muse serve`
   you spawn, over the socket daemon, or through `muse attach --stdio
   <SESSION_ID>`, which "bridges stdin/stdout to the session's host" (docs, local
-  `--help`). It exposes exactly what Cusco derives by hand:
+  `--help`). It exposes exactly what Eywa derives by hand:
   - `session/statusChanged`, broadcast to every connection, carries `status`
     (`notLoaded | idle | running`, plus an experimental `needsInput`) and
     `attention` flags (`approvalPending`, `inputPending`, and experimental
@@ -242,9 +242,9 @@ available on every event (docs).
   `PermissionRequest`, `PostToolUse`, `PostToolUseFailure`, `Stop`, `StopFailure`,
   `SessionEnd`, `SubagentStart` and `SubagentStop` (local install).
 
-## 4. Mapping to Cusco's model
+## 4. Mapping to Eywa's model
 
-| Cusco concept | Opened or created by | Ended by |
+| Eywa concept | Opened or created by | Ended by |
 | --- | --- | --- |
 | Session start / resume | `SessionStart`, with `source` `startup` or `resume`. A resume reuses the session id, because the id is the durable log identity (docs). | n/a |
 | Session clear | `SessionStart` with `source=clear` (docs). Whether clear mints a new id or keeps it is unknown: **verify**. | as below |
@@ -280,10 +280,10 @@ available on every event (docs).
   - executable file name `muse-bin-1.4.23-R8977.1`. The kernel's short `comm` is
     truncated to `muse-bin-1.4.23-` (inference from macOS MAXCOMLEN).
 
-  **Neither rule in Cusco's matcher ("file name is the client name, or `argv[0]`
+  **Neither rule in Eywa's matcher ("file name is the client name, or `argv[0]`
   is") matches.** The Muse adapter needs a rule such as "file name starts with
   `muse-bin-`" (inference).
-- **The process chain from a hook.** `cusco hook muse` ← `$SHELL -c` (zsh here)
+- **The process chain from a hook.** `eywa hook muse` ← `$SHELL -c` (zsh here)
   ← `muse-bin-…` (docs for the shell, inference for the rest). When a hook fires
   inside a subagent, the hosting process is the same one: subagents are child
   *sessions* inside the runtime, not separate processes (inference).
@@ -326,7 +326,7 @@ use reported paths (docs).
     `payload_schema_version`, `recorded_at`, `causation_id`, `durability`,
     `schema_version`. There are also `retained_marker` records and framed
     `children` transaction records (local install).
-  - **Payload types useful to Cusco:** `session.started` (with
+  - **Payload types useful to Eywa:** `session.started` (with
     `background_tasks`), `session.end` (`exit_reason`, `uptime_ms`, …),
     `approval_wait.effect.started` / `.terminal`, `tool_batch.effect.started` /
     `.terminal`, and `runtime.session`, whose `payload.event.kind` includes:
@@ -389,7 +389,7 @@ keys each session by `muse_session_id`, falling back to `session_id`. The
 **actor** is the main agent when `muse_thread_id == muse_session_id`, and
 otherwise the subagent `muse_thread_id`.
 
-| Hook | Cusco event |
+| Hook | Eywa event |
 | --- | --- |
 | `SessionStart` | Main thread only: `open` session. `resume` reopens an ended session. `clear`: if the id changed, close the session previously running in the same process (**verify**). `fork`: a new session. `compact`: no change. |
 | `UserPromptSubmit` | Main thread: `open` turn keyed by `turn_id`, and close any *other* open turn in the session as `cancelled`. A repeated `turn_id`, which a steer might produce, is a no-op (**verify** steer and queue timing). Child thread: confirm the agent. |
@@ -426,7 +426,7 @@ attributed per thread through `MUSE_THREAD_ID` once that is verified. Until
 then, use `request:turn`. MCP input requests are not observable, and interrupts
 are only inferred.
 
-**Allowed fields for `cusco hook muse`:**
+**Allowed fields for `eywa hook muse`:**
 - From stdin: `hook_event_name`, `session_id`, `turn_id`, `cwd`,
   `transcript_path`, `source`, `reason`, `notification_type`, `subagent_id`,
   `child_session_id`, `agent_id`, `agent_type`, `tool_use_id`, `tool_name`,
@@ -437,13 +437,13 @@ are only inferred.
   `last_assistant_message`, `error_details`, or `Notification`'s
   `title`/`message`, which may quote the command being approved (inference).
 
-**`cusco setup`** writes into the `hooks` member of
+**`eywa setup`** writes into the `hooks` member of
 `${XDG_CONFIG_HOME:-~/.config}/muse/settings.json`. It keeps every existing key
 and the other tools' handlers, keeps `schema_version`, writes atomically, and
 uses one group with no matcher per event:
 
 ```json
-{ "type": "command", "command": "/absolute/path/to/cusco hook muse", "timeout": 5 }
+{ "type": "command", "command": "/absolute/path/to/eywa hook muse", "timeout": 5 }
 ```
 
 Events to register: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
@@ -453,14 +453,14 @@ version accepts it, see below), `PostToolUse`, `PostToolUseFailure`,
 
 - Use an absolute command path: `PATH` is inherited from whatever launched Muse,
   which differs between a terminal, an editor and launchd (docs, inference).
-- Leave `async` unset. Cusco's hook exits in milliseconds, and synchronous
+- Leave `async` unset. Eywa's hook exits in milliseconds, and synchronous
   handlers keep event order closer to real order (inference).
 - The hook must **print nothing and always exit 0**.
 - An unknown event name skips only that event with a warning (docs), but a
   wrong-typed field kills the whole file. Setup should check the result with a
   dry run (`muse exec --provider echo` prints hook warnings at startup (docs)).
   That needs the user's approval, because it starts a session.
-- `cusco doctor` should report "installed; running sessions started before
+- `eywa doctor` should report "installed; running sessions started before
   install won't report until restarted."
 
 ## 8. Gaps and verify items
@@ -498,7 +498,7 @@ tools, approvals and subagents needs a real model run in the TUI.
    `serve` and `acp`, on SIGINT, and on terminal close (SIGHUP)?
 10. **Background and reminder agents.** Does `SubagentStop` fire for background
     subagents? Do reminder agents (skill, goal, verify) fire `SubagentStart`? If
-    they do, Cusco shows `working` after the user's turn looks done. Also check
+    they do, Eywa shows `working` after the user's turn looks done. Also check
     whether `Stop` fires at `turn/foregroundCompleted` or at the real terminal.
 11. **Questions.** The ask-user tool's name, whether `PreToolUse` fires for it,
     and what happens on its auto-resolution timeout.
@@ -518,7 +518,7 @@ tools, approvals and subagents needs a real model run in the TUI.
 18. **Docs lag.** The hook reference was checked against 1.3.0, and 1.4.23 is
     installed. Re-check the 17 accepted names and the common keys against a
     recording.
-19. **Settings lock.** How Muse uses `.settings.json.lock`, so that `cusco
+19. **Settings lock.** How Muse uses `.settings.json.lock`, so that `eywa
     setup` doesn't race a running TUI that rewrites settings (for example on a
     model change).
 
@@ -561,4 +561,4 @@ All retrieved on 18 November 2026.
 - `~/.local/share/muse/` (listing; `sessions/**/session.jsonl` key names and kind values only; `session-index.db` schema and enumerated columns only; `runtime/muse/sessions/*.json` and `*.sock.lease` key names, plus a pid liveness check)
 - `/Applications/Muse.app/Contents/Info.plist`, `Contents/MacOS/Muse` and `Contents/Resources/hatch/index.html` (string searches only); `~/Library/Application Support/Muse/` (listing)
 - `~/Developer/wooting-glance/src/agents.rs` (the `Hook` struct, `muse_event` and the `muse_child_approval_survives_parent_stop_and_clears_on_teardown` test)
-- `~/Developer/cusco/docs/design.md`
+- `~/Developer/eywa/docs/design.md`
