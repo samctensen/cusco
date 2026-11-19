@@ -4,9 +4,9 @@ Cusco is a small background service that watches the coding agents running on
 your Mac and answers one question for any program that asks: **which of my
 agents needs me?**
 
-You keep using Claude Code and Codex the way you do today. Their hooks report
-lifecycle events to Cusco, which keeps one live picture of every session, turn,
-subagent and pending approval. Any program can read that picture or subscribe
+You keep using Claude Code, Codex, Grok Build and Muse Code the way you do
+today. Their hooks report lifecycle events to Cusco, which keeps one live
+picture of every session, turn, subagent and pending approval. Any program can read that picture or subscribe
 to it over a local socket: the `cusco` command line, a menu bar app, keyboard
 lights, a Stream Deck plugin. Cusco defines the data; each consumer decides
 how to show it.
@@ -14,7 +14,8 @@ how to show it.
 The name comes from the Inca capital, the hub of a road network along which
 relay runners carried messages. Here the hooks are the runners.
 
-> **Status:** v0.1, macOS only. Supports Claude Code and Codex.
+> **Status:** v0.2, macOS only. Supports Claude Code, Codex, Grok Build and Muse
+> Code.
 
 ## How it works
 
@@ -57,13 +58,16 @@ cusco setup
 ```
 
 `brew services` runs Cusco in the background, starts it at login and restarts
-it if it stops. `cusco setup` adds Cusco's hook to Claude Code
-(`~/.claude/settings.json`) and Codex (`~/.codex/hooks.json`), whichever you
-have. It keeps your other settings and other tools' hooks, and it's safe to run
-again. Then:
+it if it stops. `cusco setup` adds Cusco's hook to each agent you have: Claude
+Code (`~/.claude/settings.json`), Codex (`~/.codex/hooks.json`), Grok Build
+(`~/.grok/hooks/cusco.json`) and Muse Code (`~/.config/muse/settings.json`). It
+keeps your other settings and other tools' hooks, and it's safe to run again.
+Then:
 
 - In Codex, run `/hooks` and trust the new hooks. Codex skips hooks until
   they're trusted.
+- In Grok, trust the folders you work in. Grok skips hooks in untrusted
+  folders.
 - Start a new agent session, so it picks up the hooks.
 
 The hook command forwards a short list of identifiers and exits immediately. It
@@ -129,11 +133,13 @@ falls behind is disconnected and should resubscribe for a fresh snapshot.
 
 ## Privacy
 
-Prompts, responses, commands and tool arguments never leave the hook command.
-Cusco receives identifiers, event names, tool names, the working directory and
-the transcript path. Tool input is reduced to a hash, used only to match an
-approval with the tool call it belongs to. Everything stays on your machine,
-in a directory only you can read.
+Prompts, responses, commands, tool arguments and tool output never leave the
+hook command. Cusco receives identifiers, event names, tool names, the working
+directory and the transcript path. Tool input is reduced to a hash, used only to
+match an approval with the tool call it belongs to. Cusco also reads Claude
+Code's session status files in `~/.claude/sessions` (session ids, process ids
+and status), never transcripts. Everything stays on your machine, in a directory
+only you can read.
 
 ## Development
 
