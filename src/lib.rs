@@ -11,3 +11,4 @@ pub mod row;
 pub mod server;
 pub mod setup;
 pub mod tree;
+pub mod visualize;

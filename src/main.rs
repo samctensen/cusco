@@ -10,6 +10,7 @@ const USAGE: &str = "usage:
   cusco serve
   cusco status [--json] [--requests] [--path <path>] [--depth <n>]
   cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
+  cusco visualize
   cusco hook <claude|codex>
   cusco --version";
 
@@ -26,6 +27,7 @@ fn main() -> ExitCode {
         Some("serve") if args.len() == 1 => serve(),
         Some("status") => query("get", &args[1..]),
         Some("watch") => query("subscribe", &args[1..]),
+        Some("visualize") if args.len() == 1 => visualize(),
         Some("--version" | "-V") => {
             println!("cusco {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -130,9 +132,7 @@ fn query(op: &str, flags: &[String]) -> ExitCode {
     let Some(request) = build_request(op, flags) else {
         return usage();
     };
-    let socket = default_dir().join(API_SOCKET);
-    let Ok(mut stream) = UnixStream::connect(&socket) else {
-        eprintln!("cusco is not running: no socket at {}", socket.display());
+    let Some(mut stream) = connect() else {
         return ExitCode::FAILURE;
     };
     if writeln!(stream, "{request}").is_err() {
@@ -156,6 +156,30 @@ fn query(op: &str, flags: &[String]) -> ExitCode {
         }
     }
     code
+}
+
+/// Draws a live view of every agent until Ctrl-C.
+fn visualize() -> ExitCode {
+    let Some(stream) = connect() else {
+        return ExitCode::FAILURE;
+    };
+    match cusco::visualize::run(stream) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("cusco: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Connects to the running service, or says that it isn't running.
+fn connect() -> Option<UnixStream> {
+    let socket = default_dir().join(API_SOCKET);
+    let stream = UnixStream::connect(&socket);
+    if stream.is_err() {
+        eprintln!("cusco is not running: no socket at {}", socket.display());
+    }
+    stream.ok()
 }
 
 fn build_request(op: &str, flags: &[String]) -> Option<Value> {
