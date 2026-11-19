@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/samctensen/cusco/main/docs/api-v1.schema.json",
+  "title": "Cusco API v1",
+  "description": "Requests a consumer sends to Cusco's api.sock, and the messages Cusco sends back. Each is one JSON object on one line. Within v1, Cusco may add message types, fields, attributes, kinds, reasons and error codes; consumers should ignore what they don't recognize. See docs/api.md.",
+  "oneOf": [{ "$ref": "#/$defs/Request" }, { "$ref": "#/$defs/Message" }],
+  "$defs": {
+    "Request": {
+      "description": "The one line a consumer sends after connecting.",
+      "type": "object",
+      "required": ["v", "op"],
+      "properties": {
+        "v": { "const": 1 },
+        "op": {
+          "description": "get: one snapshot, then the connection closes. subscribe: a snapshot, then every change.",
+          "enum": ["get", "subscribe"]
+        },
+        "view": {
+          "description": "tree: the nodes at and below path, down to depth. requests: every open request, as a flat list.",
+          "enum": ["tree", "requests"],
+          "default": "tree"
+        },
+        "path": {
+          "description": "Tree view only. The node to start at.",
+          "$ref": "#/$defs/NodeId",
+          "default": "/"
+        },
+        "depth": {
+          "description": "Tree view only. How many levels below path to include; 0 is the node alone.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "default": 1
+        }
+      }
+    },
+    "Message": {
+      "description": "One line from Cusco.",
+      "oneOf": [
+        { "$ref": "#/$defs/Snapshot" },
+        { "$ref": "#/$defs/Upsert" },
+        { "$ref": "#/$defs/Remove" },
+        { "$ref": "#/$defs/Error" }
+      ]
+    },
+    "Snapshot": {
+      "description": "Every row in the selection, sorted by id. Always the first message; it replaces everything the consumer knew.",
+      "type": "object",
+      "required": ["v", "type", "rev", "rows"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "snapshot" },
+        "rev": { "$ref": "#/$defs/Revision" },
+        "rows": { "type": "array", "items": { "$ref": "#/$defs/Row" } }
+      }
+    },
+    "Upsert": {
+      "description": "A row appeared or changed. Replace the whole row.",
+      "type": "object",
+      "required": ["v", "type", "rev", "row"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "upsert" },
+        "rev": { "$ref": "#/$defs/Revision" },
+        "row": { "$ref": "#/$defs/Row" }
+      }
+    },
+    "Remove": {
+      "description": "A row disappeared.",
+      "type": "object",
+      "required": ["v", "type", "rev", "id"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "remove" },
+        "rev": { "$ref": "#/$defs/Revision" },
+        "id": { "$ref": "#/$defs/NodeId" }
+      }
+    },
+    "Error": {
+      "description": "The request was rejected. Cusco closes the connection after it.",
+      "type": "object",
+      "required": ["v", "type", "code", "message"],
+      "properties": {
+        "v": { "const": 1 },
+        "type": { "const": "error" },
+        "code": {
+          "description": "bad_request: the request isn't an object or a field is invalid. unsupported_version: v isn't 1.",
+          "type": "string",
+          "examples": ["bad_request", "unsupported_version"]
+        },
+        "message": { "description": "A human-readable explanation.", "type": "string" }
+      }
+    },
+    "Revision": {
+      "description": "Goes up by one with every change Cusco publishes, and starts again from zero when Cusco restarts. Never compare revisions from different connections.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "NodeId": {
+      "description": "A node's path: / for the machine, /<client> for a client, then one <kind>:<name> segment per level. Treat it as an opaque key.",
+      "type": "string",
+      "pattern": "^/$|^/[^/:]+(/(process|session|turn|agent|request):[^/]+)*$",
+      "examples": ["/", "/claude", "/claude/session:7f3a/turn:12/agent:a2/request:t9"]
+    },
+    "Timestamp": {
+      "description": "RFC 3339, UTC, with milliseconds.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$",
+      "examples": ["2026-11-18T20:41:07.000Z"]
+    },
+    "Kind": {
+      "enum": ["machine", "client", "process", "session", "turn", "agent", "request"]
+    },
+    "State": {
+      "description": "Derived from the node's whole subtree. The first that applies: needs_input (an open request), working (an open turn or subagent), unknown (something open Cusco can't confirm), idle.",
+      "enum": ["needs_input", "working", "unknown", "idle"]
+    },
+    "Reason": {
+      "description": "Why a request is waiting on the user.",
+      "enum": ["approval", "question", "mcp_input"]
+    },
+    "Outcome": {
+      "enum": ["ok", "error", "cancelled"]
+    },
+    "Row": {
+      "description": "The published view of one node, summarizing its whole subtree.",
+      "type": "object",
+      "required": ["id", "kind", "state", "since", "attrs"],
+      "properties": {
+        "id": { "$ref": "#/$defs/NodeId" },
+        "kind": { "$ref": "#/$defs/Kind" },
+        "state": { "$ref": "#/$defs/State" },
+        "since": {
+          "description": "When state last changed.",
+          "$ref": "#/$defs/Timestamp"
+        },
+        "reason": {
+          "description": "Present only when state is needs_input.",
+          "$ref": "#/$defs/Reason"
+        },
+        "cause": {
+          "description": "Present when state isn't idle: the node responsible for the state, possibly this one.",
+          "$ref": "#/$defs/NodeId"
+        },
+        "counts": {
+          "description": "Present only on machine and client rows.",
+          "$ref": "#/$defs/Counts"
+        },
+        "attrs": {
+          "description": "Facts about the node, by kind. Possibly empty.",
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "needs_input" } } },
+          "then": { "required": ["reason", "cause"] },
+          "else": { "not": { "required": ["reason"] } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "idle" } } },
+          "then": { "not": { "required": ["cause"] } },
+          "else": { "required": ["cause"] }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["machine", "client"] } } },
+          "then": { "required": ["counts"] },
+          "else": { "not": { "required": ["counts"] } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "client" } } },
+          "then": { "properties": { "attrs": { "$ref": "#/$defs/ClientAttrs" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "session" } } },
+          "then": { "properties": { "attrs": { "$ref": "#/$defs/SessionAttrs" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "turn" } } },
+          "then": { "properties": { "attrs": { "$ref": "#/$defs/TurnAttrs" } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "request" } } },
+          "then": { "properties": { "attrs": { "$ref": "#/$defs/RequestAttrs" } } }
+        }
+      ]
+    },
+    "Counts": {
+      "description": "The open sessions beneath a machine or client row, in total and by state. The four states add up to sessions.",
+      "type": "object",
+      "required": ["sessions", "needs_input", "working", "unknown", "idle"],
+      "properties": {
+        "sessions": { "type": "integer", "minimum": 0 },
+        "needs_input": { "type": "integer", "minimum": 0 },
+        "working": { "type": "integer", "minimum": 0 },
+        "unknown": { "type": "integer", "minimum": 0 },
+        "idle": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ClientAttrs": {
+      "type": "object",
+      "required": ["observes"],
+      "properties": {
+        "observes": { "$ref": "#/$defs/Observes" }
+      }
+    },
+    "Observes": {
+      "description": "What a client lets Cusco see, so a consumer can tell really idle from can't see.",
+      "type": "object",
+      "required": ["agents", "approvals", "questions", "mcp_input", "interrupts"],
+      "properties": {
+        "agents": { "description": "Subagents are visible.", "type": "boolean" },
+        "approvals": {
+          "description": "actor: attributed to the subagent or main thread that asked. turn: only to the turn. none: not visible.",
+          "enum": ["actor", "turn", "none"]
+        },
+        "questions": { "description": "Questions to the user are visible.", "type": "boolean" },
+        "mcp_input": { "description": "MCP input requests are visible.", "type": "boolean" },
+        "interrupts": {
+          "description": "hook: the client reports interrupted turns. inferred: Cusco infers them.",
+          "enum": ["hook", "inferred"]
+        }
+      }
+    },
+    "SessionAttrs": {
+      "type": "object",
+      "properties": {
+        "cwd": { "description": "The working directory, as an absolute path.", "type": "string" },
+        "pid": {
+          "description": "The agent process the session runs in. Several sessions can share one.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "surface": {
+          "description": "Where the session runs. Claude Code entry points Cusco doesn't recognize pass through unchanged.",
+          "type": "string",
+          "examples": ["cli", "desktop", "ide"]
+        },
+        "last_turn": {
+          "description": "How the most recent turn ended. Missing until a turn ends.",
+          "type": "object",
+          "required": ["outcome", "ended_at"],
+          "properties": {
+            "outcome": { "$ref": "#/$defs/Outcome" },
+            "ended_at": { "$ref": "#/$defs/Timestamp" }
+          }
+        }
+      }
+    },
+    "TurnAttrs": {
+      "type": "object",
+      "properties": {
+        "origin": {
+          "description": "Claude Code only. person: the user sent the prompt. machine: something else did.",
+          "enum": ["person", "machine"]
+        }
+      }
+    },
+    "RequestAttrs": {
+      "type": "object",
+      "required": ["reason"],
+      "properties": {
+        "reason": { "$ref": "#/$defs/Reason" },
+        "prompted": {
+          "description": "The client confirmed it is showing the request to the user.",
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
