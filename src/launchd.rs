@@ -18,9 +18,6 @@ pub const LOG: &str = "eywa.log";
 /// The plist `start` loads. It sits in Eywa's directory rather than in
 /// `~/Library/LaunchAgents`, so starting Eywa doesn't also turn on autostart.
 const PLIST: &str = "launchd.plist";
-/// The labels `brew services` gives Eywa's job.
-/// Eywa unloads those jobs, and counts their plists as autostart.
-const BREW_LABELS: [&str; 2] = ["homebrew.mxcl.eywa", "sh.brew.eywa"];
 
 /// The job runs `eywa serve` on `dir`, and launchd runs it again unless it
 /// exits cleanly, which `eywa stop` makes it do.
@@ -80,13 +77,11 @@ pub fn start(executable: &Path, dir: &Path) -> io::Result<()> {
     launchctl(&["bootstrap", &domain(), &path])
 }
 
-/// Unloads Eywa's job and any left by `brew services`. launchd stops a job
-/// that's still running. Autostart stays as it is.
+/// Unloads Eywa's job. launchd stops it if it's still running. Autostart
+/// stays as it is.
 pub fn stop() -> io::Result<()> {
-    for label in std::iter::once(LABEL).chain(BREW_LABELS) {
-        if loaded(label) {
-            launchctl(&["bootout", &format!("{}/{label}", domain())])?;
-        }
+    if loaded(LABEL) {
+        launchctl(&["bootout", &format!("{}/{LABEL}", domain())])?;
     }
     Ok(())
 }
@@ -101,22 +96,13 @@ pub fn loaded(label: &str) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Whether a job left by `brew services` is loaded.
-pub fn brew_loaded() -> bool {
-    BREW_LABELS.iter().any(|label| loaded(label))
-}
-
 /// Whether launchd starts Eywa at login.
 pub fn autostart() -> bool {
-    std::iter::once(LABEL)
-        .chain(BREW_LABELS)
-        .any(|label| agent_plist(label).exists())
+    agent_plist(LABEL).exists()
 }
 
-/// Turns autostart on, replacing a plist left by `brew services`. A job
-/// already loaded keeps running as it is.
+/// Turns autostart on. A job already loaded keeps running as it is.
 pub fn enable_autostart(executable: &Path, dir: &Path) -> io::Result<()> {
-    remove_brew_plists()?;
     let path = agent_plist(LABEL);
     if let Some(agents) = path.parent() {
         std::fs::create_dir_all(agents)?;
@@ -127,14 +113,7 @@ pub fn enable_autostart(executable: &Path, dir: &Path) -> io::Result<()> {
 /// Turns autostart off. A job already loaded keeps running until
 /// `eywa stop` or logout.
 pub fn disable_autostart() -> io::Result<()> {
-    remove_brew_plists()?;
     remove(&agent_plist(LABEL))
-}
-
-fn remove_brew_plists() -> io::Result<()> {
-    BREW_LABELS
-        .iter()
-        .try_for_each(|label| remove(&agent_plist(label)))
 }
 
 fn agent_plist(label: &str) -> PathBuf {

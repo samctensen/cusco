@@ -150,14 +150,8 @@ fn start() -> ExitCode {
             println!("eywa: already running");
             return ExitCode::SUCCESS;
         }
-        if !launchd::brew_loaded() {
-            eprintln!("eywa: already running outside launchd; stop it with eywa stop first");
-            return ExitCode::FAILURE;
-        }
-        // Replace the job `brew services` started with Eywa's own.
-        if !stop_service(&socket) {
-            return ExitCode::FAILURE;
-        }
+        eprintln!("eywa: already running outside launchd; stop it with eywa stop first");
+        return ExitCode::FAILURE;
     }
     let started = eywa::setup::stable_executable().and_then(|executable| {
         server::create_dir(&dir)?;
@@ -182,7 +176,7 @@ fn stop() -> ExitCode {
     let socket = default_dir().join(API_SOCKET);
     let running = UnixStream::connect(&socket).is_ok();
     let managed = launchd_managed();
-    let loaded = managed && (launchd::loaded(launchd::LABEL) || launchd::brew_loaded());
+    let loaded = managed && launchd::loaded(launchd::LABEL);
     if !running && !loaded {
         eprintln!("eywa is not running: no socket at {}", socket.display());
         return ExitCode::FAILURE;

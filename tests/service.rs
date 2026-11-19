@@ -216,8 +216,8 @@ fn stop_ends_the_service() {
 }
 
 /// Autostart is Eywa's plist in `~/Library/LaunchAgents`, written so that
-/// launchd reads back what Eywa meant, and it replaces a plist left by
-/// `brew services`. Only the copy for the default directory touches launchd.
+/// launchd reads back what Eywa meant. Only the copy for the default
+/// directory touches launchd.
 #[test]
 fn autostart_writes_the_launch_agent() {
     let dir = temp_dir("autostart");
@@ -232,8 +232,6 @@ fn autostart_writes_the_launch_agent() {
     let home = dir.path().join("a & <b>");
     let agents = home.join("Library/LaunchAgents");
     std::fs::create_dir_all(&agents).unwrap();
-    let brew = agents.join("homebrew.mxcl.eywa.plist");
-    std::fs::write(&brew, "").unwrap();
     let autostart = |args: &[&str]| {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_eywa"))
             .arg("autostart")
@@ -246,9 +244,9 @@ fn autostart_writes_the_launch_agent() {
         String::from_utf8(output.stdout).unwrap()
     };
 
-    assert_eq!(autostart(&[]), "on\n", "brew's plist counts");
+    assert_eq!(autostart(&[]), "off\n");
     autostart(&["on"]);
-    assert!(!brew.exists());
+    assert_eq!(autostart(&[]), "on\n");
     let plist = agents.join("io.github.samctensen.eywa.plist");
     let json = std::process::Command::new("plutil")
         .args(["-convert", "json", "-o", "-"])

@@ -34,7 +34,7 @@ Avatar that connects every living thing on Pandora, names that directly.
 | `~/Library/Application Support/cusco` | `~/Library/Application Support/eywa` |
 | `cusco.log` | `eywa.log` |
 | launchd `io.github.samctensen.cusco` | `io.github.samctensen.eywa` |
-| `homebrew.mxcl.cusco`, `sh.brew.cusco` | `homebrew.mxcl.eywa`, `sh.brew.eywa` |
+| taking over `brew services` jobs (`homebrew.mxcl.cusco`, `sh.brew.cusco`) | removed: the formula has had no `service do` block since 0.3.0, so no Eywa install runs under `brew services` |
 | `~/.grok/hooks/cusco.json` | `~/.grok/hooks/eywa.json` |
 | `/Cellar/cusco/` | `/Cellar/eywa/` |
 | `.json.cusco-tmp` staging files | `.json.eywa-tmp` |
@@ -47,7 +47,8 @@ around the tree.
 ## What stays
 
 - The API: every message, field and value, and protocol version `1`.
-- Every behavior. The rename changes names only.
+- Every behavior except the `brew services` takeover, which could no longer
+  run. Otherwise the rename changes names only.
 - Dated plans and specs under `docs/superpowers/` written before this one keep
   "cusco", since they record past work. (Claude's call.)
 
