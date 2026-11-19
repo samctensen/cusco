@@ -13,9 +13,10 @@ use crate::adapter::muse::MuseAdapter;
 use crate::api::{ApiRequest, Op, Subscribers, error_line, parse_request, snapshot_line};
 use crate::process;
 use crate::record::HookRecord;
+use crate::registry::{self, SessionState, Status};
 use crate::row::{Change, Row};
 use crate::tree::{Attrs, Event, Millis, Tree};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
 use std::os::fd::AsRawFd;
@@ -43,7 +44,14 @@ pub struct Config {
     pub subscriber_queue: usize,
     /// How to recognize each client's processes when scanning at startup.
     pub executables: Vec<process::ProcessRule>,
+    /// Claude Code's session registry folder to watch, if any.
+    pub claude_sessions: Option<PathBuf>,
 }
+
+/// How long a session's registry may say `idle` before an open turn is
+/// closed. A normal turn end's `Stop` hook arrives within this time and wins,
+/// so only interrupted turns close as cancelled.
+const IDLE_SETTLE: Millis = 2_000;
 
 enum Input {
     Record(Box<HookRecord>),
@@ -52,6 +60,7 @@ enum Input {
         respond: Sender<Receiver<String>>,
     },
     ProcessExited(u32),
+    ClaudeSessions(Vec<SessionState>),
     Shutdown,
 }
 
@@ -111,6 +120,12 @@ pub fn serve(config: Config) -> io::Result<Server> {
     let dir = config.dir.clone();
     let stop = Arc::new(AtomicBool::new(false));
     let (inputs, received) = mpsc::channel();
+    if let Some(sessions) = config.claude_sessions.clone() {
+        let sender = inputs.clone();
+        registry::watch(sessions, move |states| {
+            let _ = sender.send(Input::ClaudeSessions(states));
+        });
+    }
     let threads = vec![
         spawn_core(config, received, inputs.clone()),
         spawn_ingest(ingest, inputs.clone(), stop.clone()),
@@ -169,6 +184,10 @@ struct Core {
     /// Where exit watchers report; a clone of the core's own input channel.
     exits: Sender<Input>,
     watched: HashSet<u32>,
+    /// The registry status last applied to each Claude session.
+    applied: HashMap<String, Status>,
+    /// Idle statuses waiting out the settle time, with when they apply.
+    settling: HashMap<String, (Millis, SessionState)>,
 }
 
 fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> JoinHandle<()> {
@@ -187,6 +206,8 @@ fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> 
             rev: 0,
             exits,
             watched: HashSet::new(),
+            applied: HashMap::new(),
+            settling: HashMap::new(),
         };
         core.scan_processes(&config.executables);
         core.tree.take_changes();
@@ -197,7 +218,12 @@ fn spawn_core(config: Config, inputs: Receiver<Input>, exits: Sender<Input>) -> 
 impl Core {
     fn run(&mut self, inputs: &Receiver<Input>) {
         loop {
-            let input = match self.tree.next_deadline() {
+            let settles = self.settling.values().map(|(due, _)| *due).min();
+            let next = [self.tree.next_deadline(), settles]
+                .into_iter()
+                .flatten()
+                .min();
+            let input = match next {
                 Some(deadline) => {
                     let wait = Duration::from_millis(deadline.saturating_sub(now()));
                     inputs.recv_timeout(wait)
@@ -210,11 +236,64 @@ impl Core {
                     let _ = respond.send(self.answer(request));
                 }
                 Ok(Input::ProcessExited(pid)) => self.process_exited(pid),
+                Ok(Input::ClaudeSessions(states)) => self.observe_sessions(states),
                 Ok(Input::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
                 Err(RecvTimeoutError::Timeout) => {}
             }
+            self.apply_settled(now());
             self.tree.expire(now());
             self.publish();
+        }
+    }
+
+    /// Applies Claude registry statuses that changed. A session going idle
+    /// waits out the settle time first; one seen idle for the first time
+    /// (at startup) applies at once, since no turn is open to close.
+    fn observe_sessions(&mut self, states: Vec<SessionState>) {
+        let at = now();
+        for state in states {
+            self.watch(state.pid);
+            let previous = self.applied.get(&state.session_id);
+            if previous == Some(&state.status) {
+                self.settling.remove(&state.session_id);
+                continue;
+            }
+            if state.status == Status::Idle && previous.is_some() {
+                self.settling
+                    .insert(state.session_id.clone(), (at + IDLE_SETTLE, state));
+            } else {
+                self.settling.remove(&state.session_id);
+                self.apply_state(&state, at);
+            }
+        }
+    }
+
+    fn apply_settled(&mut self, at: Millis) {
+        let due: Vec<String> = self
+            .settling
+            .iter()
+            .filter(|(_, (when, _))| *when <= at)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in due {
+            if let Some((_, state)) = self.settling.remove(&id) {
+                self.apply_state(&state, at);
+            }
+        }
+    }
+
+    fn apply_state(&mut self, state: &SessionState, at: Millis) {
+        self.applied
+            .insert(state.session_id.clone(), state.status.clone());
+        let Some(claude) = self
+            .adapters
+            .iter_mut()
+            .find(|adapter| adapter.client().name == "claude")
+        else {
+            return;
+        };
+        for event in claude.observe(state, at) {
+            self.tree.apply(event, at);
         }
     }
 
@@ -266,6 +345,8 @@ impl Core {
             let Some((client, session_id)) = session[1..].split_once("/session:") else {
                 continue;
             };
+            self.applied.remove(session_id);
+            self.settling.remove(session_id);
             if let Some(adapter) = self
                 .adapters
                 .iter_mut()

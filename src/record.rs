@@ -296,7 +296,7 @@ fn apply_muse_threads(
 }
 
 /// Claude Code's `CLAUDE_CODE_ENTRYPOINT`, as Cusco's surface vocabulary.
-fn claude_surface(entrypoint: &str) -> String {
+pub(crate) fn claude_surface(entrypoint: &str) -> String {
     let surface = if entrypoint.contains("desktop") {
         "desktop"
     } else if ["vscode", "jetbrains", "ide"]

@@ -109,6 +109,7 @@ fn serve() -> ExitCode {
         stale_after: STALE_AFTER,
         subscriber_queue: SUBSCRIBER_QUEUE,
         executables: cusco::process::ProcessRule::defaults(),
+        claude_sessions: Some(cusco::registry::default_dir()),
     };
     match server::serve(config) {
         Ok(server) => {
