@@ -4,6 +4,7 @@
 pub mod adapter;
 pub mod api;
 pub mod hook;
+pub mod launchd;
 pub mod process;
 pub mod record;
 pub mod registry;

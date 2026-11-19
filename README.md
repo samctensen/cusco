@@ -19,8 +19,9 @@ socket: the `cusco` CLI, a menu bar app, keyboard lights, a tmux status line.
 
 ```sh
 brew install samctensen/tap/cusco
-brew services start cusco   # runs Cusco now and at every login
-cusco setup                 # adds Cusco's hook to each agent you have
+cusco start          # runs Cusco in the background now
+cusco autostart on   # and at every login
+cusco setup          # adds Cusco's hook to each agent you have
 ```
 
 Then:
@@ -40,22 +41,27 @@ an agent, even when Cusco isn't running.
 
 ```sh
 brew upgrade cusco
-brew services restart cusco
+cusco stop && cusco start
 ```
+
+If you ran Cusco with `brew services` before, `cusco start` and
+`cusco autostart on` take over from it.
 
 ### Without Homebrew
 
 ```sh
 cargo install --git https://github.com/samctensen/cusco   # needs Rust 1.88+
+cusco start
+cusco autostart on
 cusco setup
-cusco serve   # runs in the foreground; stop it with ⌃C or cusco stop
 ```
 
 ### Uninstall
 
 ```sh
 cusco setup --remove
-brew services stop cusco
+cusco autostart off
+cusco stop
 brew uninstall cusco
 ```
 
@@ -65,8 +71,10 @@ brew uninstall cusco
 | --- | --- |
 | `cusco setup [agent…]` | Adds Cusco's hook to the named agents (`claude`, `codex`, `grok`, `muse`), or to every one installed. |
 | `cusco setup --remove [agent…]` | Takes the hooks out again. |
-| `cusco serve` | Runs the service in the foreground. `brew services` does this for you. |
-| `cusco stop` | Stops the service. Under `brew services`, it stays stopped until `brew services restart cusco` or your next login. |
+| `cusco start` | Runs the service in the background, and again if it crashes, until `cusco stop` or you log out. It logs to `cusco.log` in Cusco's directory. |
+| `cusco stop` | Stops the service. With autostart on, it starts again at your next login. |
+| `cusco autostart on` or `off` | Turns starting at login on or off, without starting or stopping it now. With neither, prints `on` or `off`. |
+| `cusco serve` | Runs the service in the foreground. `cusco start` does this for you. |
 | `cusco status` | Prints one snapshot and exits. |
 | `cusco watch` | Prints a snapshot, then every change, until ⌃C or Cusco stops. |
 | `cusco visualize` | A live, full-screen view of every agent. ⌃C quits. |
@@ -179,7 +187,8 @@ cargo fmt --check
 To see exactly what your agents send, set `CUSCO_RECORD=/path/to/file.jsonl`
 in the environment they run in; the hook command appends each record (allowed
 fields only) to that file. To run a second copy of Cusco alongside your own,
-point both it and your agents at another directory with `CUSCO_DIR`.
+point both it and your agents at another directory with `CUSCO_DIR` and run it
+with `cusco serve`; `start`, `stop` and `autostart` leave your own copy alone.
 
 ## License
 

@@ -69,10 +69,11 @@ pub fn targets() -> Vec<Target> {
     ]
 }
 
-/// The path hooks should run. A Homebrew install runs from a versioned
-/// Cellar directory, so hooks use the stable link in the prefix's `bin`
-/// instead: upgrades then keep working, and Codex keeps trusting them.
-pub fn hook_executable() -> io::Result<PathBuf> {
+/// The path hooks and the launchd job run Cusco by. A Homebrew install runs
+/// from a versioned Cellar directory, so they use the stable link in the
+/// prefix's `bin` instead: upgrades then keep working, and Codex keeps
+/// trusting the hooks.
+pub fn stable_executable() -> io::Result<PathBuf> {
     let executable = std::env::current_exe()?;
     let text = executable.to_string_lossy();
     if let Some(index) = text.find("/Cellar/cusco/") {

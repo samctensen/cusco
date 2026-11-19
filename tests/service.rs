@@ -210,6 +210,64 @@ fn stop_ends_the_service() {
     assert!(!dir.path().join("api.sock").exists());
 }
 
+/// Autostart is Cusco's plist in `~/Library/LaunchAgents`, written so that
+/// launchd reads back what Cusco meant, and it replaces a plist left by
+/// `brew services`. Only the copy for the default directory touches launchd.
+#[test]
+fn autostart_writes_the_launch_agent() {
+    let dir = temp_dir("autostart");
+    let output = run_cusco(&["start"], dir.path(), "");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "CUSCO_DIR leaves launchd alone"
+    );
+
+    // Characters the plist's XML must escape.
+    let home = dir.path().join("a & <b>");
+    let agents = home.join("Library/LaunchAgents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let brew = agents.join("homebrew.mxcl.cusco.plist");
+    std::fs::write(&brew, "").unwrap();
+    let autostart = |args: &[&str]| {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_cusco"))
+            .arg("autostart")
+            .args(args)
+            .env("HOME", &home)
+            .env_remove("CUSCO_DIR")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    assert_eq!(autostart(&[]), "on\n", "brew's plist counts");
+    autostart(&["on"]);
+    assert!(!brew.exists());
+    let plist = agents.join("io.github.samctensen.cusco.plist");
+    let json = std::process::Command::new("plutil")
+        .args(["-convert", "json", "-o", "-"])
+        .arg(&plist)
+        .output()
+        .unwrap();
+    let job: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let cusco_dir = home.join("Library/Application Support/cusco");
+    assert_eq!(job["ProgramArguments"][1], "serve");
+    assert_eq!(
+        job["EnvironmentVariables"]["CUSCO_DIR"],
+        cusco_dir.to_str().unwrap()
+    );
+    assert_eq!(
+        job["StandardErrorPath"],
+        cusco_dir.join("cusco.log").to_str().unwrap()
+    );
+    assert_eq!(job["KeepAlive"]["SuccessfulExit"], false);
+
+    autostart(&["off"]);
+    assert!(!plist.exists());
+    assert_eq!(autostart(&[]), "off\n");
+}
+
 /// Setup adds the hook to every event and is safe to repeat; removing it
 /// leaves other settings and other tools' hooks exactly as they were.
 #[test]

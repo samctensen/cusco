@@ -494,9 +494,11 @@ with hosts; the Claude session registry; setup for all four clients.
 6. Hook sequences replay as tests without a live agent.
 
 **Distribution:** a Homebrew tap (`brew install samctensen/tap/cusco`) builds
-from the tagged source. `brew services` runs `cusco serve` as a launchd agent,
-and `cusco setup` adds or removes the hooks. `cargo install --git` is the path
-without Homebrew.
+from the tagged source; `cargo install --git` is the path without Homebrew.
+`cusco start` loads a per-user launchd job that runs `cusco serve` and restarts
+it unless it exits cleanly, which `cusco stop` makes it do before unloading the
+job. `cusco autostart on` copies the job's plist into `~/Library/LaunchAgents`,
+so launchd also loads it at login. `cusco setup` adds or removes the hooks.
 
 **Next:** live verification of every **verify** item with recorded sessions; the
 Antigravity CLI adapter with its status line; Codex and Muse state sources;
