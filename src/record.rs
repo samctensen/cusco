@@ -118,6 +118,11 @@ impl HookRecord {
             (Some(name), Some(input)) => Some(tool_digest(name, input)),
             _ => None,
         };
+        // StopFailure's `error` is a fixed code; on a failed tool the same
+        // field holds the tool's output, which must not leave the hook.
+        let error = (event == "StopFailure")
+            .then(|| text(object, "error"))
+            .flatten();
         Ok(HookRecord {
             client: client.to_string(),
             event,
@@ -130,7 +135,7 @@ impl HookRecord {
             notification_type: text(object, "notification_type"),
             source: text(object, "source"),
             elicitation_id: id(object, "elicitation_id")?,
-            error: text(object, "error"),
+            error,
             background_tasks: background_tasks(object),
             cwd: text(object, "cwd"),
             transcript_path: text(object, "transcript_path"),

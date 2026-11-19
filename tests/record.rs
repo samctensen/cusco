@@ -19,6 +19,17 @@ fn only_allowed_fields_leave_the_hook() {
     );
     let wire = serde_json::to_string(&record).unwrap();
     assert!(!wire.contains("SECRET"), "{wire}");
+
+    // On a failed tool, `error` is the tool's output; only StopFailure's
+    // `error` is a fixed code worth keeping.
+    let failed_tool = json!({"hook_event_name": "PostToolUseFailure", "session_id": "s1",
+                             "tool_name": "Bash", "error": "SECRET"});
+    let record = HookRecord::from_payload("claude", &failed_tool).unwrap();
+    assert!(!serde_json::to_string(&record).unwrap().contains("SECRET"));
+    let failed_turn =
+        json!({"hook_event_name": "StopFailure", "session_id": "s1", "error": "rate_limit"});
+    let record = HookRecord::from_payload("claude", &failed_turn).unwrap();
+    assert_eq!(record.error.as_deref(), Some("rate_limit"));
 }
 
 #[test]
