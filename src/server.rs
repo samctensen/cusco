@@ -15,7 +15,7 @@ use crate::process;
 use crate::record::HookRecord;
 use crate::registry::{self, SessionState, Status};
 use crate::row::{Change, Row};
-use crate::tree::{Attrs, Event, Millis, Tree};
+use crate::tree::{Attrs, Event, Millis, State, Tree};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::Shutdown;
@@ -294,6 +294,15 @@ impl Core {
         };
         for event in claude.observe(state, at) {
             self.tree.apply(event, at);
+        }
+        if let Some(status_at) = state.status_at {
+            let derived = match state.status {
+                Status::Busy => State::Working,
+                Status::Waiting(_) => State::NeedsInput,
+                Status::Idle => State::Idle,
+            };
+            let session = crate::adapter::session_path("claude", &state.session_id);
+            self.tree.backdate(&session, derived, status_at);
         }
     }
 

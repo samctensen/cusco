@@ -250,6 +250,17 @@ impl Tree {
         }
     }
 
+    /// Moves a node's `since` back to `at` when a source knows its current
+    /// state began before Cusco saw it.
+    pub fn backdate(&mut self, id: &str, state: State, at: Millis) {
+        if let Some((known, since)) = self.states.get_mut(id)
+            && *known == state
+            && at < *since
+        {
+            *since = at;
+        }
+    }
+
     pub fn apply(&mut self, event: Event, at: Millis) {
         match event {
             Event::Open { id, attrs } => {

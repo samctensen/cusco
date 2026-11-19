@@ -263,8 +263,9 @@ fn setup_adds_and_removes_hooks() {
     );
 }
 
-/// Claude's per-process session file states what hooks can only imply. Claude
-/// rewrites it in place; going idle with a turn open means an interrupt.
+/// Claude's per-process session file states what hooks can only imply, and
+/// when. Claude rewrites it in place; going idle with a turn open means an
+/// interrupt.
 #[test]
 fn claude_session_file_drives_state() {
     let dir = temp_dir("registry");
@@ -273,6 +274,7 @@ fn claude_session_file_drives_state() {
     let file = sessions.join(format!("{}.json", std::process::id()));
     let write = |status: &str| {
         let state = json!({"pid": std::process::id(), "sessionId": "s1", "status": status,
+                           "statusUpdatedAt": 1_795_000_000_000u64,
                            "cwd": "/repo", "entrypoint": "cli"});
         std::fs::write(&file, state.to_string()).unwrap();
     };
@@ -304,10 +306,13 @@ fn claude_session_file_drives_state() {
         snapshot["rows"][0]["attrs"]["last_turn"]["outcome"],
         "cancelled"
     );
+    // The file says when the status changed, which can be before Cusco looked.
+    assert_eq!(snapshot["rows"][0]["since"], "2026-11-18T11:06:40.000Z");
 }
 
-/// The live view lists each client's sessions, the one that needs you first,
-/// and expands sessions at work down to the request that's waiting.
+/// The live view lists each client's sessions, the one that needs you first
+/// and then the latest, and expands sessions at work down to the request
+/// that's waiting.
 #[test]
 fn visualize_draws_the_tree() {
     let row = |id: &str, kind: &str, state: &str, attrs: serde_json::Value| {
