@@ -36,7 +36,8 @@ cusco setup
 ```
 
 - `brew services` runs Cusco in the background, starts it at login and restarts
-  it if it stops.
+  it if it crashes. `cusco stop` stops it until `brew services restart cusco`
+  or your next login.
 - `cusco setup` adds Cusco's hook to each agent it finds on your machine. It
   keeps your other settings and other tools' hooks, and it's safe to run again.
 
@@ -85,7 +86,8 @@ cusco setup
 cusco serve
 ```
 
-`cusco serve` runs in the foreground; keep it running however you like.
+`cusco serve` runs in the foreground; keep it running however you like, and
+stop it with ⌃C or `cusco stop`.
 
 ### Uninstall
 
@@ -103,6 +105,7 @@ brew uninstall cusco
 | `cusco setup claude codex` | Adds it to the named agents only: `claude`, `codex`, `grok`, `muse`. |
 | `cusco setup --remove` | Takes Cusco's hooks out again. Accepts agent names too. |
 | `cusco serve` | Runs the service in the foreground. `brew services` does this for you. |
+| `cusco stop` | Stops the running service and waits until it has. Under `brew services`, it stays stopped until `brew services restart cusco` or your next login. |
 | `cusco status` | Prints one snapshot and exits. |
 | `cusco watch` | Prints a snapshot, then every change as it happens, until you press ⌃C or Cusco stops. |
 | `cusco visualize` | A live, full-screen view of every agent in the terminal. ⌃C quits. |
@@ -120,8 +123,8 @@ in [the API reference](docs/api.md). They take the same options:
 The levels are machine (`/`), agent app (`/claude`), session, turn and
 subagent, so `--depth 2` stops at sessions.
 
-`status` exits with `1` if Cusco isn't running, and `2` if the options are
-wrong.
+`status` and `stop` exit with `1` if Cusco isn't running, and `2` if the
+options are wrong.
 
 ### Recipes
 

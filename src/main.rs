@@ -8,6 +8,7 @@ use std::process::ExitCode;
 const USAGE: &str = "usage:
   cusco setup [claude] [codex] [grok] [muse] [--remove]
   cusco serve
+  cusco stop
   cusco status [--json] [--requests] [--path <path>] [--depth <n>]
   cusco watch [--json] [--requests] [--path <path>] [--depth <n>]
   cusco visualize
@@ -25,6 +26,7 @@ fn main() -> ExitCode {
         }
         Some("setup") => setup(&args[1..]),
         Some("serve") if args.len() == 1 => serve(),
+        Some("stop") if args.len() == 1 => stop(),
         Some("status") => query("get", &args[1..]),
         Some("watch") => query("subscribe", &args[1..]),
         Some("visualize") if args.len() == 1 => visualize(),
@@ -117,6 +119,7 @@ fn serve() -> ExitCode {
         Ok(server) => {
             eprintln!("cusco: serving {}", dir.display());
             server.wait();
+            eprintln!("cusco: stopped");
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -124,6 +127,46 @@ fn serve() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Asks the running service to stop, then waits until its socket stops
+/// answering.
+fn stop() -> ExitCode {
+    let Some(mut stream) = connect() else {
+        return ExitCode::FAILURE;
+    };
+    let _ = writeln!(stream, "{}", json!({"v": 1, "op": "stop"}));
+    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+        let message: Value = serde_json::from_str(&line).unwrap_or_default();
+        if message["type"] == "error" {
+            let reason = message["message"].as_str().unwrap_or_default();
+            eprintln!("cusco: the service refused to stop: {reason}");
+            return ExitCode::FAILURE;
+        }
+    }
+    let socket = default_dir().join(API_SOCKET);
+    for _ in 0..100 {
+        if UnixStream::connect(&socket).is_err() {
+            println!("cusco: stopped");
+            if brew_service_installed() {
+                println!("cusco: start it again with: brew services restart cusco");
+            }
+            return ExitCode::SUCCESS;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    eprintln!("cusco: still running after 5 seconds");
+    ExitCode::FAILURE
+}
+
+/// Whether `brew services` runs Cusco. Its launchd job stays loaded after a
+/// clean stop, so `brew services start` fails and `restart` is the way back.
+fn brew_service_installed() -> bool {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let agents = std::path::Path::new(&home).join("Library/LaunchAgents");
+    ["sh.brew.cusco.plist", "homebrew.mxcl.cusco.plist"]
+        .iter()
+        .any(|name| agents.join(name).exists())
 }
 
 /// Sends one API request built from the flags and prints every line of the

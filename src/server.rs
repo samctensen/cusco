@@ -10,7 +10,9 @@ use crate::adapter::claude::ClaudeAdapter;
 use crate::adapter::codex::CodexAdapter;
 use crate::adapter::grok::GrokAdapter;
 use crate::adapter::muse::MuseAdapter;
-use crate::api::{ApiRequest, Op, Subscribers, error_line, parse_request, snapshot_line};
+use crate::api::{
+    ApiRequest, Op, Subscribers, error_line, parse_request, snapshot_line, stopping_line,
+};
 use crate::process;
 use crate::record::HookRecord;
 use crate::registry::{self, SessionState, Status};
@@ -381,6 +383,11 @@ impl Core {
                 let _ = sender.send(snapshot_line(self.rev, &selected));
                 receiver
             }
+            Op::Stop => {
+                let (sender, receiver) = mpsc::channel();
+                let _ = sender.send(stopping_line());
+                receiver
+            }
         }
     }
 
@@ -452,22 +459,21 @@ fn serve_connection(stream: UnixStream, inputs: &Sender<Input>) {
         return;
     }
     let mut writer = stream;
-    let lines = match parse_request(line.trim()) {
+    let request = match parse_request(line.trim()) {
         Err(error) => {
             let _ = writeln!(writer, "{}", error_line(&error));
             let _ = writer.shutdown(Shutdown::Both);
             return;
         }
-        Ok(request) => {
-            let (respond, response) = mpsc::channel();
-            if inputs.send(Input::Request { request, respond }).is_err() {
-                return;
-            }
-            let Ok(lines) = response.recv() else {
-                return;
-            };
-            lines
-        }
+        Ok(request) => request,
+    };
+    let stop = request.op == Op::Stop;
+    let (respond, response) = mpsc::channel();
+    if inputs.send(Input::Request { request, respond }).is_err() {
+        return;
+    }
+    let Ok(lines) = response.recv() else {
+        return;
     };
     for line in lines {
         if writeln!(writer, "{line}").is_err() {
@@ -475,6 +481,10 @@ fn serve_connection(stream: UnixStream, inputs: &Sender<Input>) {
         }
     }
     let _ = writer.shutdown(Shutdown::Both);
+    // Shut down only after answering: the process exits soon after the core stops.
+    if stop {
+        let _ = inputs.send(Input::Shutdown);
+    }
 }
 
 fn raise_receive_buffer(socket: &UnixDatagram) {
