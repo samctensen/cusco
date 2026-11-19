@@ -176,7 +176,8 @@ fn client_row_has_the_wire_shape() {
             "since": "1970-01-01T00:00:00.001Z", "reason": "approval",
             "cause": "/claude/session:s1/turn:p1/request:r1",
             "counts": {"sessions": 3, "needs_input": 1, "working": 1, "unknown": 0, "idle": 1},
-            "attrs": {"observes": ["session", "turn", "agent", "request"]}
+            "attrs": {"observes": {"agents": true, "approvals": "actor", "questions": true,
+                                   "mcp_input": true, "interrupts": "inferred"}}
         })
     );
 }

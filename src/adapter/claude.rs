@@ -5,12 +5,18 @@ use super::{
     request_path, session_path, turn_path, with_reason,
 };
 use crate::record::HookRecord;
-use crate::tree::{Attrs, Client, Event, Millis, Outcome};
+use crate::tree::{Attribution, Attrs, Client, Detection, Event, Millis, Observes, Outcome};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 const CLIENT: Client = Client {
     name: "claude",
-    observes: &["session", "turn", "agent", "request"],
+    observes: Observes {
+        agents: true,
+        approvals: Attribution::Actor,
+        questions: true,
+        mcp_input: true,
+        interrupts: Detection::Inferred,
+    },
 };
 
 /// How many recent tool calls per actor are remembered for matching an

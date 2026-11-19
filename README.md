@@ -119,7 +119,8 @@ whole subtree:
 {"id":"/claude","kind":"client","state":"needs_input","since":"2026-11-18T20:41:07.000Z",
  "reason":"approval","cause":"/claude/session:7f3a/turn:12/agent:a2/request:t9",
  "counts":{"sessions":4,"needs_input":1,"working":2,"unknown":0,"idle":1},
- "attrs":{"observes":["session","turn","agent","request"]}}
+ "attrs":{"observes":{"agents":true,"approvals":"actor","questions":true,
+                      "mcp_input":true,"interrupts":"inferred"}}}
 ```
 
 `cause` points at the node responsible for the state, so one more `get` tells

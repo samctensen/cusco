@@ -102,7 +102,40 @@ pub enum Event {
 #[derive(Clone, Copy, Debug)]
 pub struct Client {
     pub name: &'static str,
-    pub observes: &'static [&'static str],
+    pub observes: Observes,
+}
+
+/// What a client lets Cusco see, published on its row so a consumer can tell
+/// "really idle" from "can't see this".
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Observes {
+    pub agents: bool,
+    pub approvals: Attribution,
+    pub questions: bool,
+    pub mcp_input: bool,
+    pub interrupts: Detection,
+}
+
+/// Whom an approval request is attributed to.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Attribution {
+    /// The subagent or main thread that asked.
+    Actor,
+    /// Only the turn: the client doesn't say which subagent asked.
+    Turn,
+    /// Approvals aren't visible.
+    None,
+}
+
+/// How Cusco learns that the user interrupted a turn.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Detection {
+    /// The client reports it.
+    Hook,
+    /// Cusco infers it from what happens next.
+    Inferred,
 }
 
 /// Returns the kind of node a path names, or `None` if the path is malformed.
@@ -185,8 +218,10 @@ impl Tree {
         nodes.insert("/".to_string(), Node::new(Kind::Machine, at));
         for client in clients {
             let mut node = Node::new(Kind::Client, at);
-            node.attrs
-                .insert("observes".into(), serde_json::json!(client.observes));
+            node.attrs.insert(
+                "observes".into(),
+                serde_json::to_value(client.observes).expect("observes serializes"),
+            );
             nodes.insert(format!("/{}", client.name), node);
         }
         let mut tree = Tree {
