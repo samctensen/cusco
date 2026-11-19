@@ -262,3 +262,42 @@ fn setup_adds_and_removes_hooks() {
         "Cusco's own file goes"
     );
 }
+
+/// Claude's per-process session file states what hooks can only imply. Claude
+/// rewrites it in place; going idle with a turn open means an interrupt.
+#[test]
+fn claude_session_file_drives_state() {
+    let dir = temp_dir("registry");
+    let sessions = dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let file = sessions.join(format!("{}.json", std::process::id()));
+    let write = |status: &str| {
+        let state = json!({"pid": std::process::id(), "sessionId": "s1", "status": status,
+                           "cwd": "/repo", "entrypoint": "cli"});
+        std::fs::write(&file, state.to_string()).unwrap();
+    };
+    write("busy");
+    let _service = cusco::server::serve(cusco::server::Config {
+        claude_sessions: Some(sessions.clone()),
+        ..config(dir.path())
+    })
+    .unwrap();
+    let request = r#"{"v":1,"op":"get","path":"/claude","depth":0}"#;
+    wait_for_snapshot(dir.path(), request, |s| s["rows"][0]["state"] == "working");
+
+    write("waiting");
+    wait_for_snapshot(dir.path(), request, |s| {
+        s["rows"][0]["state"] == "needs_input"
+    });
+
+    write("idle");
+    let snapshot = wait_for_snapshot(
+        dir.path(),
+        r#"{"v":1,"op":"get","path":"/claude/session:s1","depth":0}"#,
+        |s| s["rows"][0]["state"] == "idle",
+    );
+    assert_eq!(
+        snapshot["rows"][0]["attrs"]["last_turn"]["outcome"],
+        "cancelled"
+    );
+}

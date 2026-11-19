@@ -20,6 +20,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 pub trait Adapter: Send {
     fn client(&self) -> Client;
     fn handle(&mut self, record: &HookRecord, at: Millis) -> Vec<Event>;
+    /// Applies a session's state as the client's own records state it,
+    /// outside hooks. Only Claude Code has such a source so far.
+    fn observe(&mut self, _state: &crate::registry::SessionState, _at: Millis) -> Vec<Event> {
+        Vec::new()
+    }
     /// Drops all state for a session that ended outside the adapter's view,
     /// for example because its process exited.
     fn forget_session(&mut self, session_id: &str);
@@ -444,6 +449,10 @@ impl Sessions {
     /// reuses its id.
     pub(crate) fn admits(&mut self, record: &HookRecord, session_id: &str) -> bool {
         self.ended.admits(session_id, &record.event)
+    }
+
+    pub(crate) fn is_ended(&self, session_id: &str) -> bool {
+        self.ended.set.contains(session_id)
     }
 
     pub(crate) fn tracker(&mut self, client: &str, session_id: &str) -> &mut Tracker {

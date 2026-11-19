@@ -85,6 +85,7 @@ pub fn config(dir: &Path) -> cusco::server::Config {
         stale_after: 2_000,
         subscriber_queue: 256,
         executables: Vec::new(),
+        claude_sessions: None,
     }
 }
 
