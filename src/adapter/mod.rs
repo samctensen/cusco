@@ -1,13 +1,19 @@
-//! Adapters turn one client's hook records into tree events. Each keeps the
-//! per-session state that mapping needs, such as which tool call an approval
-//! belongs to.
+//! Adapters turn one client's hook records into tree events. The bookkeeping
+//! every client needs (turns, subagents, open tool calls and the requests
+//! waiting on them) lives in [`Tracker`]; each adapter maps its client's
+//! events onto it.
+//!
+//! Synchronous hooks block the agent, so one thread's events arrive in order;
+//! only different threads interleave. Activity carrying a closed node's own id
+//! therefore reopens it: a blocked `Stop` continues its turn, and a resumed
+//! subagent starts again.
 
 pub mod claude;
 pub mod codex;
 
 use crate::record::HookRecord;
 use crate::tree::{Attrs, Client, Event, Millis, Outcome};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub trait Adapter: Send {
     fn client(&self) -> Client;
@@ -18,10 +24,14 @@ pub trait Adapter: Send {
 }
 
 /// Parallel tool calls run their hooks at the same moment, so a sibling's
-/// `PreToolUse` can arrive just after another call's `PermissionRequest`. A
-/// new tool call answers an approval only once the approval has been open
-/// this long, which is less than anyone takes to respond to a prompt.
+/// `PreToolUse` can arrive just after another call's approval request. A new
+/// tool call answers an approval only once the approval has been open this
+/// long, which is less than anyone takes to respond to a prompt.
 pub(crate) const SIBLING_WINDOW: Millis = 1_000;
+
+/// How many open tool calls per actor are remembered for matching an
+/// approval to its call.
+const RECENT_CALLS: usize = 64;
 
 pub fn session_path(client: &str, session: &str) -> String {
     format!("/{client}/session:{session}")
@@ -62,74 +72,386 @@ pub(crate) fn open_session(path: &str, record: &HookRecord) -> Event {
     open(path.to_string(), attrs)
 }
 
-pub(crate) fn with_reason(reason: &str) -> Attrs {
-    let mut attrs = Attrs::new();
-    attrs.insert("reason".into(), reason.into());
-    attrs
+/// A request id built from free text, such as an MCP server name, made safe
+/// to use as a path segment.
+pub(crate) fn request_key(prefix: &str, text: &str) -> String {
+    let key: String = format!("{prefix}-{text}")
+        .chars()
+        .map(|c| if c == '/' { '-' } else { c })
+        .take(crate::record::MAX_ID_BYTES)
+        .collect();
+    key
 }
 
-/// One session's turns: which is open, and which have closed. Hooks run
-/// concurrently, so a record can arrive after its turn closed; such a turn is
-/// never reopened.
-#[derive(Default)]
-pub(crate) struct Turns {
-    open: Option<String>,
-    closed: HashSet<String>,
+/// Why a request is waiting on the user.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Reason {
+    Approval,
+    Question,
+    McpInput,
+}
+
+impl Reason {
+    fn label(self) -> &'static str {
+        match self {
+            Reason::Approval => "approval",
+            Reason::Question => "question",
+            Reason::McpInput => "mcp_input",
+        }
+    }
+}
+
+/// Whoever raised an event: the main thread working in a root turn, or a
+/// subagent.
+#[derive(Clone, Debug)]
+pub(crate) struct Actor {
+    /// The subagent id, or empty for the main thread.
+    pub key: String,
+    /// The root turn the actor works in.
+    pub turn: String,
+    pub path: String,
+}
+
+struct Request {
+    actor: String,
+    path: String,
+    reason: Reason,
+    opened_at: Millis,
+}
+
+struct Agent {
+    turn: String,
+    open: bool,
+}
+
+/// One session's bookkeeping.
+pub(crate) struct Tracker {
+    session: String,
+    open_turn: Option<String>,
+    latest_turn: Option<String>,
     numbered: u64,
+    agents: HashMap<String, Agent>,
+    /// Open tool calls per actor: `(digest, tool_use_id)`, oldest first.
+    calls: HashMap<String, VecDeque<(String, String)>>,
+    requests: HashMap<String, Request>,
 }
 
-impl Turns {
-    /// The turn a record belongs to: its own turn id, else the open turn.
-    pub(crate) fn of(&self, record: &HookRecord) -> Option<String> {
-        record.turn_id.clone().or_else(|| self.open.clone())
+impl Tracker {
+    pub(crate) fn new(session: String) -> Tracker {
+        Tracker {
+            session,
+            open_turn: None,
+            latest_turn: None,
+            numbered: 0,
+            agents: HashMap::new(),
+            calls: HashMap::new(),
+            requests: HashMap::new(),
+        }
     }
 
-    pub(crate) fn is_closed(&self, turn: &str) -> bool {
-        self.closed.contains(turn)
+    /// The main thread, in `turn` or else in the open turn.
+    pub(crate) fn root(&self, turn: Option<&str>) -> Option<Actor> {
+        let turn = turn.map(String::from).or_else(|| self.open_turn.clone())?;
+        Some(Actor {
+            key: String::new(),
+            path: turn_path(&self.session, &turn),
+            turn,
+        })
     }
 
-    /// Starts the record's turn, numbering it when the record carries no
-    /// turn id. Returns the new turn and the previously open turn, if any,
-    /// or `None` when the record's turn already closed.
-    pub(crate) fn begin(&mut self, record: &HookRecord) -> Option<(String, Option<String>)> {
-        let turn = record.turn_id.clone().unwrap_or_else(|| {
+    /// Subagent `agent`, in the root turn that started it, else in `turn`,
+    /// else in the open or latest root turn. A subagent's own turn ids never
+    /// become root turns.
+    pub(crate) fn agent(&self, agent: &str, turn: Option<&str>) -> Option<Actor> {
+        let turn = self
+            .agents
+            .get(agent)
+            .map(|known| known.turn.clone())
+            .or_else(|| turn.map(String::from))
+            .or_else(|| self.open_turn.clone())
+            .or_else(|| self.latest_turn.clone())?;
+        Some(Actor {
+            key: agent.to_string(),
+            path: agent_path(&turn_path(&self.session, &turn), agent),
+            turn,
+        })
+    }
+
+    /// Starts a turn, numbered when the client gives no id. A different
+    /// open turn was interrupted and closes as cancelled; the same id
+    /// (steering, a repeated prompt) only confirms it.
+    pub(crate) fn begin_turn(&mut self, turn: Option<&str>, attrs: Attrs, events: &mut Vec<Event>) {
+        let turn = turn.map(String::from).unwrap_or_else(|| {
             self.numbered += 1;
             format!("n{}", self.numbered)
         });
-        if self.closed.contains(&turn) {
-            return None;
+        if let Some(previous) = self.open_turn.clone().filter(|open| *open != turn) {
+            self.end_turn(Some(&previous), Outcome::Cancelled, events);
         }
-        let previous = self.open.replace(turn.clone()).filter(|open| *open != turn);
-        Some((turn, previous))
+        events.push(open(turn_path(&self.session, &turn), attrs));
+        self.open_turn = Some(turn.clone());
+        self.latest_turn = Some(turn);
     }
 
-    /// Makes a turn seen for the first time the open turn, unless it closed
-    /// or another turn is open.
-    pub(crate) fn adopt(&mut self, turn: &str) {
-        if self.open.is_none() && !self.closed.contains(turn) {
-            self.open = Some(turn.to_string());
+    /// Ends `turn`, or the open turn. The main thread's requests in it close
+    /// with it; its subagents keep running.
+    pub(crate) fn end_turn(
+        &mut self,
+        turn: Option<&str>,
+        outcome: Outcome,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(turn) = turn.map(String::from).or_else(|| self.open_turn.clone()) else {
+            return;
+        };
+        let path = turn_path(&self.session, &turn);
+        events.push(close(path.clone(), outcome));
+        if self.open_turn.as_deref() == Some(turn.as_str()) {
+            self.open_turn = None;
+        }
+        let prefix = format!("{path}/request:");
+        self.requests
+            .retain(|_, request| !request.path.starts_with(&prefix));
+        self.calls.remove("");
+    }
+
+    /// Opens the actor's node, or confirms it. Activity is proof the actor is
+    /// running, so this reopens a turn or subagent that had closed. A
+    /// subagent's activity never reopens the root turn it belongs to.
+    pub(crate) fn enter(&mut self, actor: &Actor, events: &mut Vec<Event>) {
+        events.push(open(actor.path.clone(), Attrs::new()));
+        if actor.key.is_empty() {
+            if self.open_turn.is_none() {
+                self.open_turn = Some(actor.turn.clone());
+            }
+            self.latest_turn = Some(actor.turn.clone());
+            return;
+        }
+        let agent = self
+            .agents
+            .entry(actor.key.clone())
+            .or_insert_with(|| Agent {
+                turn: actor.turn.clone(),
+                open: true,
+            });
+        agent.open = true;
+        if self.open_turn.as_deref() != Some(actor.turn.as_str()) {
+            events.push(close(turn_path(&self.session, &actor.turn), Outcome::Ok));
         }
     }
 
-    /// Marks a turn closed (the open turn when `turn` is `None`). Returns it
-    /// if this call closed it.
-    pub(crate) fn finish(&mut self, turn: Option<String>) -> Option<String> {
-        let turn = turn.or_else(|| self.open.clone())?;
-        if !self.closed.insert(turn.clone()) {
-            return None;
+    /// Starts (or restarts) a subagent.
+    pub(crate) fn start_agent(&mut self, agent: &str, turn: Option<&str>, events: &mut Vec<Event>) {
+        if let Some(actor) = self.agent(agent, turn) {
+            self.enter(&actor, events);
         }
-        if self.open.as_deref() == Some(turn.as_str()) {
-            self.open = None;
+    }
+
+    /// Stops a subagent. It can start again later under the same id.
+    pub(crate) fn stop_agent(&mut self, agent: &str, outcome: Outcome, events: &mut Vec<Event>) {
+        let Some(actor) = self.agent(agent, None) else {
+            return;
+        };
+        let Some(state) = self.agents.get_mut(agent).filter(|state| state.open) else {
+            return;
+        };
+        state.open = false;
+        events.push(close(actor.path, outcome));
+        self.requests.retain(|_, request| request.actor != agent);
+        self.calls.remove(agent);
+    }
+
+    /// Closes the open subagents a client no longer lists as running,
+    /// except any waiting on the user.
+    pub(crate) fn reconcile_agents(&mut self, running: &HashSet<&str>, events: &mut Vec<Event>) {
+        let waiting: HashSet<String> = self
+            .requests
+            .values()
+            .map(|request| request.actor.clone())
+            .collect();
+        let finished: Vec<String> = self
+            .agents
+            .iter()
+            .filter(|(id, state)| {
+                state.open && !running.contains(id.as_str()) && !waiting.contains(*id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for agent in finished {
+            self.stop_agent(&agent, Outcome::Ok, events);
         }
-        Some(turn)
+    }
+
+    /// Remembers a tool call that has started, for matching an approval to it.
+    pub(crate) fn remember_call(
+        &mut self,
+        actor: &Actor,
+        digest: Option<&str>,
+        tool_use_id: Option<&str>,
+    ) {
+        let Some(tool_use_id) = tool_use_id else {
+            return;
+        };
+        let calls = self.calls.entry(actor.key.clone()).or_default();
+        calls.push_back((
+            digest.unwrap_or_default().to_string(),
+            tool_use_id.to_string(),
+        ));
+        if calls.len() > RECENT_CALLS {
+            calls.pop_front();
+        }
+    }
+
+    pub(crate) fn forget_call(&mut self, tool_use_id: &str) {
+        for calls in self.calls.values_mut() {
+            calls.retain(|(_, id)| id != tool_use_id);
+        }
+    }
+
+    /// The call an approval is for: the actor's newest open call with the
+    /// same input, else its only open call.
+    pub(crate) fn match_call(&self, actor: &Actor, digest: Option<&str>) -> Option<String> {
+        let calls = self.calls.get(&actor.key)?;
+        digest
+            .and_then(|digest| calls.iter().rev().find(|(seen, _)| seen == digest))
+            .or_else(|| (calls.len() == 1).then(|| &calls[0]))
+            .map(|(_, id)| id.clone())
+    }
+
+    /// A new tool call from the actor answers its approvals, except within
+    /// the sibling window.
+    pub(crate) fn answer_approvals(&mut self, actor: &Actor, at: Millis, events: &mut Vec<Event>) {
+        self.close_requests(
+            |request| {
+                request.actor == actor.key
+                    && request.reason == Reason::Approval
+                    && at.saturating_sub(request.opened_at) >= SIBLING_WINDOW
+            },
+            Outcome::Ok,
+            events,
+        );
+    }
+
+    /// Opens a request under the actor, opening the actor first if needed.
+    pub(crate) fn open_request(
+        &mut self,
+        actor: &Actor,
+        id: &str,
+        reason: Reason,
+        at: Millis,
+        events: &mut Vec<Event>,
+    ) {
+        self.enter(actor, events);
+        if self.requests.contains_key(id) {
+            return;
+        }
+        let path = request_path(&actor.path, id);
+        let mut attrs = Attrs::new();
+        attrs.insert("reason".into(), reason.label().into());
+        events.push(open(path.clone(), attrs));
+        self.requests.insert(
+            id.to_string(),
+            Request {
+                actor: actor.key.clone(),
+                path,
+                reason,
+                opened_at: at,
+            },
+        );
+    }
+
+    pub(crate) fn close_request(&mut self, id: &str, outcome: Outcome, events: &mut Vec<Event>) {
+        if let Some(request) = self.requests.remove(id) {
+            events.push(close(request.path, outcome));
+        }
+    }
+
+    fn close_requests(
+        &mut self,
+        matches: impl Fn(&Request) -> bool,
+        outcome: Outcome,
+        events: &mut Vec<Event>,
+    ) {
+        let ids: Vec<String> = self
+            .requests
+            .iter()
+            .filter(|(_, request)| matches(request))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            self.close_request(&id, outcome, events);
+        }
+    }
+
+    /// Closes the actor's open requests of one kind.
+    pub(crate) fn close_reason(
+        &mut self,
+        actor: Option<&Actor>,
+        reason: Reason,
+        events: &mut Vec<Event>,
+    ) {
+        self.close_requests(
+            |request| {
+                request.reason == reason && actor.is_none_or(|actor| request.actor == actor.key)
+            },
+            Outcome::Ok,
+            events,
+        );
+    }
+
+    pub(crate) fn has_requests(&self) -> bool {
+        !self.requests.is_empty()
+    }
+
+    /// Marks open approvals as confirmed shown to the user: some clients
+    /// ask an automatic reviewer before they ask a person.
+    pub(crate) fn mark_prompted(&self, events: &mut Vec<Event>) {
+        for request in self
+            .requests
+            .values()
+            .filter(|r| r.reason == Reason::Approval)
+        {
+            let mut attrs = Attrs::new();
+            attrs.insert("prompted".into(), true.into());
+            events.push(Event::Attr {
+                id: request.path.clone(),
+                attrs,
+            });
+        }
     }
 }
 
-/// Sessions that have ended. Hooks run concurrently, so records can arrive
-/// after the `SessionEnd` they preceded; those are ignored. Bounded so a
-/// long-running service doesn't grow without limit.
+/// Every session of one client, plus the ones that have ended.
 #[derive(Default)]
-pub(crate) struct EndedSessions {
+pub(crate) struct Sessions {
+    trackers: HashMap<String, Tracker>,
+    ended: EndedSessions,
+}
+
+impl Sessions {
+    /// Whether to process a record. An ended session stays ended for late
+    /// records, but a new start or prompt brings it back: a resumed session
+    /// reuses its id.
+    pub(crate) fn admits(&mut self, record: &HookRecord, session_id: &str) -> bool {
+        self.ended.admits(session_id, &record.event)
+    }
+
+    pub(crate) fn tracker(&mut self, client: &str, session_id: &str) -> &mut Tracker {
+        self.trackers
+            .entry(session_id.to_string())
+            .or_insert_with(|| Tracker::new(session_path(client, session_id)))
+    }
+
+    pub(crate) fn end(&mut self, session_id: &str) {
+        self.trackers.remove(session_id);
+        self.ended.insert(session_id);
+    }
+}
+
+/// Sessions that have ended, bounded so a long-running service doesn't grow
+/// without limit.
+#[derive(Default)]
+struct EndedSessions {
     order: VecDeque<String>,
     set: HashSet<String>,
 }
@@ -137,7 +459,7 @@ pub(crate) struct EndedSessions {
 const ENDED_CAPACITY: usize = 1024;
 
 impl EndedSessions {
-    pub(crate) fn insert(&mut self, session_id: &str) {
+    fn insert(&mut self, session_id: &str) {
         if self.set.insert(session_id.to_string()) {
             self.order.push_back(session_id.to_string());
             if self.order.len() > ENDED_CAPACITY
@@ -148,18 +470,15 @@ impl EndedSessions {
         }
     }
 
-    /// Whether to process a record. An ended session stays ended for late
-    /// records, but a new start or prompt brings it back: a resumed session
-    /// reuses its id.
-    pub(crate) fn admits(&mut self, record: &HookRecord) -> bool {
-        if !self.set.contains(&record.session_id) {
+    fn admits(&mut self, session_id: &str, event: &str) -> bool {
+        if !self.set.contains(session_id) {
             return true;
         }
-        if !matches!(record.event.as_str(), "SessionStart" | "UserPromptSubmit") {
+        if !matches!(event, "SessionStart" | "UserPromptSubmit") {
             return false;
         }
-        self.set.remove(&record.session_id);
-        self.order.retain(|session| *session != record.session_id);
+        self.set.remove(session_id);
+        self.order.retain(|session| session != session_id);
         true
     }
 }
