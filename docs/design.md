@@ -449,7 +449,7 @@ and applies each status change:
 | --- | --- |
 | `busy` | Open a turn if hooks haven't reported one: a placeholder named `running`, which the first hook naming the real turn replaces. Close any open request: going busy again after waiting means it was answered. |
 | `waiting` | Open a request if none is open, else mark the open ones `prompted`. |
-| `idle` | After two seconds, close a turn that is still open as `cancelled`. An ordinary `Stop` hook arrives within that time and wins, so only interrupted turns close this way. |
+| `idle` | Close a turn that is still open at once, with no outcome yet (`end`). For two seconds the outcome is unsettled: a `Stop` hook makes it `ok`, `StopFailure` makes it `error`, and a new prompt or two seconds of silence makes it `cancelled`. Until it settles no other main-thread hook reopens the turn; the registry going `busy` or `waiting` does. |
 
 At startup this states every Claude session at once, with no `unknown`.
 

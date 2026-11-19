@@ -376,17 +376,23 @@ fn claude_session_file_drives_state() {
     wait_for_snapshot(dir.path(), request, |s| s["rows"][0]["state"] == "working");
 
     write("idle");
-    let snapshot = wait_for_snapshot(
-        dir.path(),
-        r#"{"v":1,"op":"get","path":"/claude/session:s1","depth":0}"#,
-        |s| s["rows"][0]["state"] == "idle",
-    );
-    assert_eq!(
-        snapshot["rows"][0]["attrs"]["last_turn"]["outcome"],
-        "cancelled"
+    let session = r#"{"v":1,"op":"get","path":"/claude/session:s1","depth":0}"#;
+    let snapshot = wait_for_snapshot(dir.path(), session, |s| s["rows"][0]["state"] == "idle");
+    assert!(
+        snapshot["rows"][0]["attrs"].get("last_turn").is_none(),
+        "idle is published before the outcome is known"
     );
     // The file says when the status changed, which can be before Cusco looked.
     assert_eq!(snapshot["rows"][0]["since"], "2026-11-18T11:06:40.000Z");
+
+    // Another session's file changing makes Cusco read s1's idle again; the
+    // outcome still arrives.
+    let other = json!({"pid": std::os::unix::process::parent_id(), "sessionId": "s2",
+                       "status": "idle"});
+    std::fs::write(sessions.join("other.json"), other.to_string()).unwrap();
+    wait_for_snapshot(dir.path(), session, |s| {
+        s["rows"][0]["attrs"]["last_turn"]["outcome"] == "cancelled"
+    });
 }
 
 /// The live view lists each client's sessions, the one that needs you first

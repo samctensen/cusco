@@ -8,6 +8,7 @@ use cusco::adapter::codex::CodexAdapter;
 use cusco::adapter::grok::GrokAdapter;
 use cusco::adapter::muse::MuseAdapter;
 use cusco::record::HookRecord;
+use cusco::registry::{SessionState, Status};
 use cusco::tree::{Millis, STALE_AFTER, State, Tree};
 use serde_json::{Value, json};
 
@@ -107,6 +108,77 @@ fn interrupted_turn_is_cancelled() {
         ("Notification", json!({"notification_type": "idle_prompt"})),
     ]);
     assert_eq!(t.state("/claude"), Some(State::Idle));
+}
+
+/// Claude's registry going idle closes the turn at once. How it ended is
+/// settled afterwards: by the Stop hook, a new prompt, or silence.
+#[test]
+fn idle_closes_the_turn_before_its_outcome_is_known() {
+    let session = "/claude/session:s1";
+    let registry = |status| SessionState {
+        session_id: "s1".into(),
+        pid: 1,
+        status,
+        status_at: None,
+        cwd: None,
+        entrypoint: None,
+    };
+    let apply = |tree: &mut Tree, events: Vec<cusco::tree::Event>, at: Millis| {
+        for event in events {
+            tree.apply(event, at);
+        }
+    };
+    // A turn open at 0, and the registry idle at one second.
+    let interrupted = || {
+        let mut adapter = ClaudeAdapter::new();
+        let mut tree = Tree::new(&[adapter.client()], STALE_AFTER, 0);
+        feed(&mut tree, &mut adapter, &("UserPromptSubmit", json!({})), 0);
+        let events = adapter.observe(&registry(Status::Idle), 1_000);
+        apply(&mut tree, events, 1_000);
+        (adapter, tree)
+    };
+    let last_turn = |tree: &Tree| tree.attrs(session).unwrap().get("last_turn").cloned();
+
+    let (mut adapter, mut tree) = interrupted();
+    assert_eq!(tree.state(session), Some(State::Idle));
+    assert_eq!(last_turn(&tree), None);
+    let late = ("PostToolUse", json!({"tool_use_id": "tu1"}));
+    feed(&mut tree, &mut adapter, &late, 1_100);
+    assert_eq!(
+        tree.state(session),
+        Some(State::Idle),
+        "a late tool hook can't reopen the turn"
+    );
+    feed(&mut tree, &mut adapter, &("Stop", json!({})), 1_200);
+    assert_eq!(
+        last_turn(&tree),
+        Some(json!({"outcome": "ok", "ended_at": "1970-01-01T00:00:01.000Z"}))
+    );
+
+    let (mut adapter, mut tree) = interrupted();
+    let next = ("UserPromptSubmit", json!({"turn_id": "p2"}));
+    feed(&mut tree, &mut adapter, &next, 1_500);
+    assert_eq!(last_outcome(&tree, session), "cancelled");
+    assert!(tree.contains("/claude/session:s1/turn:p2"));
+
+    let (mut adapter, mut tree) = interrupted();
+    let events = adapter.settle("s1", 3_000);
+    apply(&mut tree, events, 3_000);
+    assert_eq!(last_outcome(&tree, session), "cancelled");
+
+    // Busy again: the idle didn't hold, so nothing is recorded.
+    let (mut adapter, mut tree) = interrupted();
+    let events = adapter.observe(&registry(Status::Busy), 1_300);
+    apply(&mut tree, events, 1_300);
+    let events = adapter.settle("s1", 3_000);
+    apply(&mut tree, events, 3_000);
+    assert_eq!(tree.state(session), Some(State::Working));
+    assert_eq!(last_turn(&tree), None);
+
+    // A session that ends first gets no outcome afterwards.
+    let (mut adapter, mut tree) = interrupted();
+    feed(&mut tree, &mut adapter, &("SessionEnd", json!({})), 1_400);
+    assert!(adapter.settle("s1", 3_000).is_empty());
 }
 
 /// A parallel sibling's hook can arrive just after a permission request; a
