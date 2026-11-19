@@ -173,6 +173,11 @@ fn command_line() {
     let output = run_cusco(&["hook", "claude"], dir.path(), payload);
     assert!(output.status.success() && output.stdout.is_empty());
 
+    // A client that ignored `args` would run bare `cusco`. That must not fail
+    // a hook: exit code 2 blocks a tool call.
+    let output = run_cusco(&[], dir.path(), payload);
+    assert!(output.status.success() && output.stdout.is_empty() && output.stderr.is_empty());
+
     let _service = start(dir.path());
     run_cusco(&["hook", "claude"], dir.path(), payload);
     wait_for_snapshot(
@@ -280,7 +285,7 @@ fn setup_adds_and_removes_hooks() {
     });
     std::fs::create_dir_all(config.join("muse")).unwrap();
     let settings = claude.join("settings.json");
-    let original = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\"\n          }\n        ]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
+    let original = "{\n  \"theme\": \"dark\",\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"other-tool\",\n            \"args\": [\"hook\", \"claude\"]\n          }\n        ]\n      }\n    ]\n  },\n  \"model\": \"opus\"\n}\n";
     std::fs::write(&settings, original).unwrap();
     // Codex trusts hooks by position: an existing Cusco hook between two
     // other hooks must stay where it is.
@@ -292,6 +297,10 @@ fn setup_adds_and_removes_hooks() {
         group("last")
     ]);
     std::fs::write(&codex_hooks, json!({"hooks": {"Stop": stop}}).to_string()).unwrap();
+    // Grok has an entry in the old form, run through a shell.
+    std::fs::create_dir_all(grok.join("hooks")).unwrap();
+    let old = json!({"hooks": {"Stop": [group("/old/path/cusco hook grok")]}});
+    std::fs::write(grok.join("hooks/cusco.json"), old.to_string()).unwrap();
     let envs = [
         ("CLAUDE_CONFIG_DIR", claude.as_path()),
         ("CODEX_HOME", codex.as_path()),
@@ -311,13 +320,40 @@ fn setup_adds_and_removes_hooks() {
     assert_eq!(parsed["hooks"]["Stop"].as_array().unwrap().len(), 2);
     let command =
         |value: &serde_json::Value| value["hooks"][0]["command"].as_str().unwrap().to_string();
-    assert!(command(&parsed["hooks"]["PermissionRequest"][0]).ends_with("cusco hook claude"));
+    let entry = |value: &serde_json::Value| value["hooks"][0].clone();
+    let claude_entry = entry(&parsed["hooks"]["PermissionRequest"][0]);
+    assert!(command(&parsed["hooks"]["PermissionRequest"][0]).ends_with("/cusco"));
+    assert_eq!(claude_entry["args"], json!(["hook", "claude"]));
     let stop = read(&codex_hooks)["hooks"]["Stop"].clone();
     assert_eq!(command(&stop[0]), "first");
     assert!(
         command(&stop[1]).ends_with("cusco hook codex") && !command(&stop[1]).starts_with("/old")
     );
     assert_eq!(command(&stop[2]), "last");
+    assert!(
+        entry(&stop[1]).get("args").is_none(),
+        "Codex has no shell-free form"
+    );
+    let grok_stop = read(&grok.join("hooks/cusco.json"))["hooks"]["Stop"].clone();
+    assert_eq!(
+        grok_stop.as_array().unwrap().len(),
+        1,
+        "replaced where it sat"
+    );
+    assert_eq!(entry(&grok_stop[0])["args"], json!(["hook", "grok"]));
+    assert!(!command(&grok_stop[0]).starts_with("/old"));
+    let muse_stop = read(&config.join("muse/settings.json"))["hooks"]["Stop"].clone();
+    assert!(entry(&muse_stop[0]).get("args").is_none());
+    // Without a shell the path is stored as it is; with one it is quoted.
+    let spaced = std::path::Path::new("/a b/cusco");
+    assert_eq!(
+        cusco::setup::hook_entry(spaced, "claude", true)["command"],
+        "/a b/cusco"
+    );
+    assert_eq!(
+        cusco::setup::hook_entry(spaced, "codex", false)["command"],
+        "'/a b/cusco' hook codex"
+    );
     assert!(read(&grok.join("hooks/cusco.json"))["hooks"]["StopCancelled"].is_array());
     assert_eq!(
         read(&config.join("muse/settings.json"))["schema_version"],

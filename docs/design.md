@@ -155,7 +155,11 @@ an `observes` record, so a consumer can tell "really idle" from "can't see this"
 
 ### Capture
 
-Each client's hook configuration runs `cusco hook <client>`. The hook command
+Each client's hook configuration runs `cusco hook <client>`. Where a client can
+run a command with no shell (Claude Code and Grok Build, through `args`),
+`cusco setup` writes that form; Codex and Muse Code run the command through a
+shell. Run with no arguments and piped input, `cusco` exits 0 silently, so a
+client that ignores `args` can't fail a hook. The hook command
 parses the client's payload and hook environment into one record shape, keeps only
 the allowed fields, sends them as one datagram to Cusco's ingest socket and exits.
 If Cusco isn't running, it exits immediately with status 0. It never prints: every
