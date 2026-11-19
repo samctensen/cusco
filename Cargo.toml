@@ -1,0 +1,22 @@
+[package]
+name = "cusco"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Watches the coding agents on your machine and tells any program which ones need you"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "cusco"
+path = "src/main.rs"
+
+[dependencies]
+humantime = "2"
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
