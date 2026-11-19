@@ -325,7 +325,7 @@ fn visualize_draws_the_tree() {
             "/claude/session:s2",
             "session",
             "idle",
-            json!({"cwd": "/src/agora"}),
+            json!({"cwd": "/src/ago\u{7}ra"}),
         ),
         row("/claude/session:s2/turn:old", "turn", "idle", json!({})),
         row(
