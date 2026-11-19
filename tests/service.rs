@@ -305,3 +305,77 @@ fn claude_session_file_drives_state() {
         "cancelled"
     );
 }
+
+/// The live view lists each client's sessions, the one that needs you first,
+/// and expands sessions at work down to the request that's waiting.
+#[test]
+fn visualize_draws_the_tree() {
+    let row = |id: &str, kind: &str, state: &str, attrs: serde_json::Value| {
+        let row = json!({"id": id, "kind": kind, "state": state,
+                         "since": "2026-11-18T20:00:00.000Z", "attrs": attrs});
+        (id.to_string(), row)
+    };
+    let counts = json!({"sessions": 2, "needs_input": 1, "working": 0, "unknown": 0, "idle": 1});
+    let mut machine = row("/", "machine", "needs_input", json!({}));
+    machine.1["counts"] = counts;
+    let rows = [
+        machine,
+        row("/claude", "client", "needs_input", json!({})),
+        row(
+            "/claude/session:s2",
+            "session",
+            "idle",
+            json!({"cwd": "/src/agora"}),
+        ),
+        row("/claude/session:s2/turn:old", "turn", "idle", json!({})),
+        row(
+            "/claude/session:s9",
+            "session",
+            "needs_input",
+            json!({"cwd": "/src/cusco"}),
+        ),
+        row(
+            "/claude/session:s9/turn:p1",
+            "turn",
+            "needs_input",
+            json!({}),
+        ),
+        row(
+            "/claude/session:s9/turn:p1/request:t9",
+            "request",
+            "needs_input",
+            json!({"reason": "approval"}),
+        ),
+        row("/codex", "client", "idle", json!({})),
+    ]
+    .into_iter()
+    .collect();
+    let now = humantime::parse_rfc3339("2026-11-18T20:02:05Z").unwrap();
+    let now = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+
+    let screen = cusco::visualize::render(&rows, now, 60);
+    let mut plain = String::new();
+    let mut escape = false;
+    for c in screen.chars() {
+        match (escape, c) {
+            (false, '\x1b') => escape = true,
+            (true, 'm') => escape = false,
+            (false, c) => plain.push(c),
+            _ => {}
+        }
+    }
+    let lines: Vec<&str> = plain.lines().collect();
+    let line = |text: &str| lines.iter().position(|line| line.contains(text)).unwrap();
+    assert!(lines[line("cusco ·")].contains("2 sessions"), "{plain}");
+    assert!(
+        lines[line("cusco s9")].contains("needs you 2m 05s"),
+        "{plain}"
+    );
+    assert!(line("cusco s9") < line("approval") && line("approval") < line("agora"));
+    assert!(!plain.contains("turn old"), "idle sessions stay collapsed");
+    assert!(lines[line("codex")].contains("no sessions"));
+    assert!(lines.iter().all(|line| line.chars().count() <= 60));
+}

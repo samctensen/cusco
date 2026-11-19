@@ -101,9 +101,11 @@ cusco status                       # one snapshot of the machine and each client
 cusco status --path /claude --depth 2
 cusco status --requests            # everything currently waiting on you
 cusco watch                        # a snapshot, then every change as it happens
+cusco visualize                    # a live view of every agent, in the terminal
 ```
 
-Output is one JSON object per line. `status` exits 1 if Cusco isn't running.
+`status` and `watch` print one JSON object per line. `status` exits 1 if Cusco
+isn't running.
 
 ## The API
 
